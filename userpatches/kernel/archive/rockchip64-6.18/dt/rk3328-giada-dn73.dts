@@ -29,6 +29,12 @@
 		ethernet0 = &gmac2io;
 		mmc0 = &sdmmc;
 		mmc2 = &emmc;
+		/*
+		 * The HYM8563 gets rtc0 so that userspace syncs the chip that
+		 * actually has a backup cell. The RK805 keeps its own RTC and
+		 * falls through to rtc1.
+		 */
+		rtc0 = &hym8563;
 	};
 
 	chosen {
@@ -94,9 +100,21 @@
 		vin-supply = <&vcc_io>;
 	};
 
+	/*
+	 * USB VBUS enables. The Dusun SoM drives GPIO3_A5 and GPIO3_A7 for
+	 * these; on this board those two pins are uart1 RTS and CTS, i.e. the
+	 * DB9 RS232 port, and the real enables are elsewhere - GPIO0_A2 and
+	 * GPIO2_C5 per the vendor device tree.
+	 *
+	 * All four USB connectors were measured to enumerate with both pins
+	 * held low, so VBUS is not actually gated on this revision and these
+	 * regulators change nothing by themselves. They are corrected anyway
+	 * because the wrong pins did do damage: they took the serial port
+	 * away.
+	 */
 	vcc_otg_5v: vcc-otg-5v-regulator {
 		compatible = "regulator-fixed";
-		gpio = <&gpio3 RK_PA5 GPIO_ACTIVE_HIGH>;
+		gpio = <&gpio0 RK_PA2 GPIO_ACTIVE_HIGH>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&usb_otg_drv>;
 		enable-active-high;
@@ -106,7 +124,7 @@
 
 	vcc_host_5v: vcc-host-5v-regulator {
 		compatible = "regulator-fixed";
-		gpio = <&gpio3 RK_PA7 GPIO_ACTIVE_HIGH>;
+		gpio = <&gpio2 RK_PC5 GPIO_ACTIVE_HIGH>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&usb_host_drv>;
 		enable-active-high;
@@ -351,6 +369,31 @@
 &i2c1 {
 	status = "okay";
 
+	/*
+	 * Battery-backed RTC, on the same bus as the PMIC. The Dusun profile
+	 * has no idea it exists and leaves the machine relying on the RK805's
+	 * RTC alone. The chip on the unit tested here came up with its
+	 * voltage-low flag clear, so the cell is fitted and had kept the
+	 * oscillator running.
+	 *
+	 * No interrupt is described on purpose. The vendor device tree points
+	 * its irq_gpio at GPIO2_C4, but that pin does not move when the alarm
+	 * fires: with AIE set and AF latched in the chip, a read of every GPIO
+	 * bank's EXT_PORT register is unchanged. The INT output goes to the
+	 * power circuitry rather than to the SoC, which is the only way the
+	 * datasheet's "RTC: set up independently every day, a week as a cycle"
+	 * can work - scheduled power-on has to act while the SoC is off.
+	 *
+	 * Declaring the interrupt anyway would expose an rtc wakealarm that
+	 * accepts a time and then silently never fires.
+	 */
+	hym8563: rtc@51 {
+		compatible = "haoyu,hym8563";
+		reg = <0x51>;
+		#clock-cells = <0>;
+		clock-output-names = "hym8563_clkout";
+	};
+
 	rk805: pmic@18 {
 		compatible = "rockchip,rk805";
 		reg = <0x18>;
@@ -510,11 +553,11 @@
 
 	usb2 {
 		usb_otg_drv: usb-otg-drv {
-			rockchip,pins = <3 RK_PA5 RK_FUNC_GPIO &pcfg_pull_none>;
+			rockchip,pins = <0 RK_PA2 RK_FUNC_GPIO &pcfg_pull_none>;
 		};
 
 		usb_host_drv: usb-host-drv {
-			rockchip,pins = <3 RK_PA7 RK_FUNC_GPIO &pcfg_pull_none>;
+			rockchip,pins = <2 RK_PC5 RK_FUNC_GPIO &pcfg_pull_none>;
 		};
 	};
 };
@@ -583,6 +626,17 @@
  */
 &uart0 {
 	status = "disabled";
+};
+
+/*
+ * The DB9 on the back panel. Full RS232 with hardware flow control:
+ * GPIO3_A4/A6 are RXD/TXD, GPIO3_A5 is RTS and GPIO3_A7 is CTS. Exposed as
+ * /dev/ttyS1.
+ */
+&uart1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart1_xfer>, <&uart1_cts>, <&uart1_rts>;
+	status = "okay";
 };
 
 &uart2 {

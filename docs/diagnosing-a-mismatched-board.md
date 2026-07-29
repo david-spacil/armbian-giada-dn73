@@ -135,6 +135,47 @@ Rather than rebooting per collision, dump the whole picture at once:
 cat /sys/kernel/debug/pinctrl/pinctrl-rockchip-pinctrl/pinmux-pins
 ```
 
+## Checking whether an interrupt line actually reaches the SoC
+
+The vendor device tree is evidence, not truth. Its `irq_gpio` for the HYM8563
+RTC pointed at GPIO2_C4, and the pin never moved when the alarm fired.
+
+Testing this does not need a scope. Drive the peripheral into the state where it
+should be asserting — here, set the alarm-interrupt-enable bit and let the alarm
+match, so the chip latches its alarm flag and holds INT low — then read every
+GPIO bank's `GPIO_EXT_PORT` register (offset `0x50`) through `/dev/mem`, with the
+flag latched and again with it cleared. `EXT_PORT` reports the pad level for all
+32 pins of a bank whether or not anything has claimed them, which is exactly what
+`gpioget` and the gpiolib debugfs file cannot do.
+
+**Sample more than once per state.** The first run of this looked like a clean
+hit on GPIO1_B5 — one bit differed between the two snapshots. GPIO1_B5 is
+`mac_rxclk` in `rgmiim1_pins`, a 125 MHz clock being sampled by a Python loop,
+and repeating the snapshot eight times per state showed it and its neighbours
+flipping at random in *both* states. Any pin carrying a clock or fast data will
+manufacture a difference for you. A one-shot before/after diff on 128 pins is not
+a measurement.
+
+The real conclusion was that no pin moves at all. For an RTC that is not a
+defect: scheduled power-on has to work while the SoC is unpowered, so INT belongs
+on the power circuitry, not on a GPIO. Worth describing an interrupt only when
+you have seen it move — a `wakealarm` that accepts a time and silently never
+fires is worse than no `wakealarm`.
+
+## One wrong pin can cost two peripherals
+
+The dusun profile modelled the USB VBUS enables on GPIO3_A5 and GPIO3_A7 and
+drove them high at boot. On this board those pins are uart1 RTS and CTS, so
+pinctrl handed them to the regulators and the RS232 port could never claim them.
+
+Two things follow. First, the damage from a wrong pin shows up on a peripheral
+that has nothing to do with the node that got it wrong — nobody investigating a
+missing serial port would start by reading the USB regulators. Second, the pins
+were *harmless* in their own right: measured with both driven low, all four USB
+connectors still enumerated, because VBUS is not gated on this board at all. A
+GPIO assignment that appears to work is not evidence that it is correct; it may
+simply be connected to nothing.
+
 ## A driver detail that costs hours
 
 `of_mdiobus_register()` sets `phy_mask = ~0` before registering. The practical

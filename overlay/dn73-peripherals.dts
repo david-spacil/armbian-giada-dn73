@@ -1,0 +1,100 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * Giada DN73 - RS232 and RTC for an existing dusun-dsom-010r install.
+ *
+ * Companion to gmac2io-rtl8211.dts. Everything here is also in
+ * userpatches/kernel/archive/rockchip64-6.18/dt/rk3328-giada-dn73.dts; this
+ * overlay exists so a machine already running a dusun-based image can pick the
+ * peripherals up without being reinstalled.
+ *
+ * Values taken from the vendor device tree "GIADA JHS557 ANDROID Q", extracted
+ * from the firmware image with scripts/extract-dtb.py.
+ */
+
+/ {
+	compatible = "rockchip,rk3328";
+
+	/*
+	 * The dusun profile drives GPIO3_A5 and GPIO3_A7 as USB VBUS enables.
+	 * On this board those are uart1 RTS and CTS - the DB9 on the back
+	 * panel - so pinctrl hands them to the regulators and the serial port
+	 * can never claim them. The real enables are GPIO0_A2 and GPIO2_C5.
+	 *
+	 * Moving them does not change USB behaviour: all four connectors were
+	 * measured to enumerate with both pins driven low, so VBUS is not
+	 * gated on this revision. It is the serial port that this buys back.
+	 */
+	fragment@0 {
+		target = <&usb_otg_drv>;
+
+		__overlay__ {
+			rockchip,pins = <0 2 0 &pcfg_pull_none>;	/* GPIO0_A2 */
+		};
+	};
+
+	fragment@1 {
+		target = <&usb_host_drv>;
+
+		__overlay__ {
+			rockchip,pins = <2 21 0 &pcfg_pull_none>;	/* GPIO2_C5 */
+		};
+	};
+
+	fragment@2 {
+		target = <&vcc_otg_5v>;
+
+		__overlay__ {
+			gpio = <&gpio0 2 0>;
+		};
+	};
+
+	fragment@3 {
+		target = <&vcc_host_5v>;
+
+		__overlay__ {
+			gpio = <&gpio2 21 0>;
+		};
+	};
+
+	/* RS232 on the DB9, with hardware flow control. Becomes /dev/ttyS1. */
+	fragment@4 {
+		target = <&uart1>;
+
+		__overlay__ {
+			pinctrl-names = "default";
+			pinctrl-0 = <&uart1_xfer>, <&uart1_cts>, <&uart1_rts>;
+			status = "okay";
+		};
+	};
+
+	/*
+	 * Battery-backed RTC next to the PMIC. No interrupt is described: the
+	 * vendor points irq_gpio at GPIO2_C4, but with the alarm flag latched
+	 * in the chip no GPIO bank's EXT_PORT register changes, so the INT
+	 * line does not reach the SoC. It goes to the power circuitry, which
+	 * is what makes the scheduled power-on feature work while the SoC is
+	 * off. Describing it here would only create a wakealarm that accepts a
+	 * time and never fires.
+	 *
+	 * Note this registers as rtc1 - an overlay cannot usefully add an
+	 * rtc0 alias, since the RK805 has already taken the number by the time
+	 * this probes. The board DTS does set the alias.
+	 */
+	fragment@5 {
+		target = <&i2c1>;
+
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			hym8563: rtc@51 {
+				compatible = "haoyu,hym8563";
+				reg = <0x51>;
+				#clock-cells = <0>;
+				clock-output-names = "hym8563_clkout";
+			};
+		};
+	};
+};
