@@ -163,10 +163,23 @@ DTS sets the alias properly.
 
 ## Known quirks
 
-**MAC address.** U-Boot does not supply one for `gmac2io`, so the kernel
-generates a random MAC on every boot and the machine gets a different DHCP lease
-each time. The overlay has a commented-out `local-mac-address` with instructions
-for deriving a stable value from the SoC eFuse serial.
+**The interface is `end0`, not `eth0`.** Setting `ethernet0 = &gmac2io` in
+`aliases` is what makes udev see the port as onboard device 0. Firewall rules and
+scripts carried over from a dusun-based install will name the wrong interface.
+
+**MAC address** — fixed by the same alias, and worth explaining because it looks
+unrelated. Rockchip U-Boot derives a stable MAC from the SoC cpuid and writes it
+into `local-mac-address` on whatever node `ethernet0` points at. On the dusun
+device tree that is `gmac2phy`, so `gmac2io` got nothing and the kernel invented
+a random address on every boot — a different DHCP lease each time. With the alias
+corrected, U-Boot's address lands on the right node; verified stable across
+reboots.
+
+**Running from SD does not mean running your U-Boot.** The RK3328 boot ROM
+prefers eMMC, so a box with an existing eMMC install boots that bootloader and
+only then picks the kernel up from the card — `/proc/device-tree/chosen/u-boot,version`
+gives away which one actually ran. The board's own U-Boot takes over after
+`armbian-install`.
 
 **MIC-IN is not wired up, in hardware.** The RK3328's internal codec is playback
 only, so the microphone input has to go through a separate ADC. The vendor
@@ -203,11 +216,13 @@ vendor firmware is available:
 
 ## Status
 
-Tested on Armbian with kernel 6.18 (`current`).
+Built and booted: Armbian 26.08.0-trunk, Debian trixie, kernel 6.18.40
+(`current`), full BTF. Verified on hardware from an image built by this profile,
+with no overlays applied.
 
 | | |
 |---|---|
-| Gigabit ethernet | 1 Gbps full duplex, 300 MB moved with no errors or drops |
+| Gigabit ethernet | `end0`, 1 Gbps full duplex, stable U-Boot-supplied MAC |
 | WiFi + Bluetooth | `rtw88_8821cu`, `hci0` |
 | USB | all four connectors enumerate |
 | RS232 (DB9) | `/dev/ttyS1` |
@@ -215,6 +230,7 @@ Tested on Armbian with kernel 6.18 (`current`).
 | IR receiver | `rc0` + `/dev/lirc0`, NEC frames decode cleanly |
 | Audio | line-out, S/PDIF, HDMI — **not** mic-in |
 | microSD, eMMC, HDMI, watchdog | |
+| Boot time | 23 s (5 s kernel + 18 s userspace), no failed units |
 
 Not submitted upstream. U-Boot is borrowed from the Dusun DSOM 010R — same SoC,
 same power design, and it boots this board fine; the kernel loads its own DTB, so
