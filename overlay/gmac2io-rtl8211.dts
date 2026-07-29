@@ -1,0 +1,160 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * Giada DN73 (deska JHS557) - zprovozneni gigabitoveho ethernetu.
+ *
+ * Armbian profil dusun-dsom-010r sedi jen na SoC. RJ45 na teto desce vede
+ * pres externi RTL8211E na gmac2io (ff540000), ktery ma Armbianuv DTB
+ * vypnuty, a zapina misto nej interni 100Mb gmac2phy, kam neni pripojeno nic.
+ *
+ * Hodnoty prevzaty z vendorskeho device tree "GIADA JHS557 ANDROID Q",
+ * vytazeneho z firmware image pomoci scripts/extract-dtb.py.
+ */
+
+/ {
+	compatible = "rockchip,rk3328";
+
+	fragment@0 {
+		target = <&gmac2io>;
+
+		__overlay__ {
+			assigned-clocks = <&cru 100>, <&cru 102>;	/* SCLK_MAC2IO, _EXT */
+			assigned-clock-parents = <&gmac_clkin>, <&gmac_clkin>;
+			clock_in_out = "input";		/* 125 MHz dodava PHY */
+			phy-mode = "rgmii";
+			phy-handle = <&rtl8211>;
+
+			/*
+			 * U-Boot does not fill in a MAC for gmac2io, so the kernel
+			 * makes up a random one on every boot and the box ends up
+			 * with a different DHCP lease each time.
+			 *
+			 * Uncomment and set your own - one stable choice is to
+			 * derive it from the SoC eFuse serial, which is unique per
+			 * chip and survives reflashing:
+			 *
+			 *   cat /proc/device-tree/serial-number
+			 *
+			 * Take the last five bytes and prefix 0x02 (locally
+			 * administered, unicast), e.g. serial 99d4385fbd15d55d
+			 * gives 02:5f:bd:15:d5:5d.
+			 */
+			/* local-mac-address = [02 xx xx xx xx xx]; */
+			phy-supply = <&vcc_phy>;
+			pinctrl-names = "default";
+			pinctrl-0 = <&rgmiim1_pins>;
+			tx_delay = <0x26>;
+			rx_delay = <0x11>;
+			status = "okay";
+
+			/*
+			 * PHY musi byt deklarovany jako potomek: of_mdiobus_register()
+			 * nastavi phy_mask = ~0, takze automaticky sken sbernice
+			 * neprobehne vubec a registruji se jen PHY uvedene v DT.
+			 * Vendor zadny mdio uzel nema a jede tedy pres autoscan.
+			 *
+			 * Adresa 1 zjistena rucnim ctenim registru MACu pres /dev/mem
+			 * (scripts/mdio-raw-scan.py): PHYID 0x001cc915 = RTL8211E.
+			 */
+			mdio {
+				compatible = "snps,dwmac-mdio";
+				#address-cells = <1>;
+				#size-cells = <0>;
+				/*
+				 * Reset musi byt aktivne drzeny nahore - kdyz ho
+				 * nikdo nedrzi, deska pin stahne a PHY neodpovida
+				 * vubec. Prodlevy jsou o neco delsi nez vendorskych
+				 * 10/50 ms, cistě pro rezervu.
+				 */
+				reset-gpios = <&gpio1 24 1>;	/* GPIO1_D0, active low */
+				reset-delay-us = <20000>;
+				reset-post-delay-us = <100000>;
+
+				rtl8211: ethernet-phy@1 {
+					reg = <1>;
+				};
+			};
+		};
+	};
+
+	/*
+	 * Jadro veci: napajeni PHY je spinane GPIO0_A0 (pinctrl skupina se u
+	 * vendora jmenuje "eth-power-gpio"). Armbianuv DTB ma vcc_phy jako
+	 * obycejny always-on regulator bez gpio a jeste s 1,8 V misto 3,3 V,
+	 * takze se PHY nikdy nerozbehne - cteni po MDIO pak vraci same nuly.
+	 */
+	fragment@1 {
+		target = <&vcc_phy>;
+
+		__overlay__ {
+			gpio = <&gpio0 0 0>;
+			enable-active-high;
+			regulator-min-microvolt = <3300000>;
+			regulator-max-microvolt = <3300000>;
+		};
+	};
+
+	/*
+	 * RGMII skupina rgmiim1_pins (RK3328 pro gmac2io jinou nema) koliduje
+	 * s temito uzly. Zadny z nich na teto desce nic neobsluhuje: na SDIO
+	 * nesedi zadny cip (WiFi RTL8821CU je na USB), na uart0 nevede konzole
+	 * (ta je na ttyS2 / ff130000) a sdio_pwrseq patri k tomu SDIO.
+	 */
+	fragment@2 {
+		target = <&sdio>;
+
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+
+	fragment@3 {
+		target = <&uart0>;
+
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+
+	fragment@4 {
+		target = <&sdio_pwrseq>;
+
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+
+	/*
+	 * Interni PHY neni na teto desce k nicemu pripojeny a vendor ho ma taky
+	 * vypnuty. Bez toho vznika matouci druhe rozhrani, ktere nikdy nechytne
+	 * carrier.
+	 */
+	fragment@5 {
+		target = <&gmac2phy>;
+
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+
+	/*
+	 * Onboard WiFi/BT (RTL8821CU) visi na USB za hubem GL850G, ale ma vlastni
+	 * napajeci pin. Vendor ho ridi uzlem "wireless-wlan" s vlastnosti
+	 * WIFI,poweren_gpio = <&gpio3 8 0>, coz je binding vendorskeho jadra
+	 * Rockchipu a v mainline neexistuje. Staci ale pin natrvalo vybudit -
+	 * hned se enumeruje jak wlan (rtw88_8821cu), tak bluetooth (btusb).
+	 */
+	fragment@6 {
+		target = <&gpio3>;
+
+		__overlay__ {
+			wifi-power-hog {
+				gpio-hog;
+				gpios = <8 0>;		/* GPIO3_B0, active high */
+				output-high;
+				line-name = "wifi-power-en";
+			};
+		};
+	};
+};
