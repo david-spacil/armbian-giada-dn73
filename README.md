@@ -23,8 +23,9 @@ PHY and the WiFi/BT combo are all soldered onto one Giada-designed board
 | U8 | Genesys GL850G | USB 2.0 hub |
 | — | Realtek RTL8821CU | WiFi 802.11ac + Bluetooth, **USB** attached |
 | — | Rockchip RK805-1 | PMIC |
-| — | Haoyu **HYM8563** | battery-backed RTC, i2c1 @ 0x51 |
-| — | Everest ES7243 | mic-in ADC, i2c0 @ 0x13 — see *Known quirks* |
+| — | Haoyu **HYM8563** | battery-backed RTC, i2c1 @ 0x51, CR2032 on `BAT CON` |
+| U31 | Sipex **SP213EEA** | RS232 transceiver for the DB9 |
+| — | *(unmarked)* | IR receiver on GPIO2_A2 |
 | U1800/U1801 | Samsung DDR3 | |
 
 The four USB connectors are one USB 3.2 Gen1 on the xHCI, one USB 2.0 OTG on
@@ -97,6 +98,21 @@ way the datasheet's *"RTC: set up independently every day, a week as a cycle"*
 can work: scheduled power-on has to act while the SoC is off. Describing the
 interrupt would only produce a `wakealarm` that accepts a time and never fires.
 
+### 6. There is an IR receiver, on a driver that does not exist
+
+The vendor runs it from PWM3 in capture mode through `rockchip,remotectl-pwm`,
+a vendor-kernel driver with no mainline counterpart — which is presumably why
+nobody bothers with IR on RK3328 boards.
+
+It is not needed. The part on GPIO2_A2 is a demodulating receiver: pointing any
+remote at the box produces textbook NEC framing on the pin — a 8.92 ms leader
+mark, a 4.42 ms space, ~560 µs bit marks, with both the address and the command
+inversion bytes checking out. `gpio-ir-receiver` plus rc-core's NEC decoder
+handles that directly.
+
+No keymap is set, since the machine ships without a remote. Point `ir-keytable`
+at whichever one you use.
+
 ### And the WiFi
 
 The RTL8821CU hangs off the GL850G hub but has its own supply pin, **GPIO3_B0**.
@@ -152,13 +168,19 @@ generates a random MAC on every boot and the machine gets a different DHCP lease
 each time. The overlay has a commented-out `local-mac-address` with instructions
 for deriving a stable value from the SoC eFuse serial.
 
-**MIC-IN does not work and probably cannot.** The RK3328's internal codec is
-playback only, so the microphone input goes through an Everest **ES7243** ADC on
-i2c0 at 0x13. Mainline has no driver for it — `sound/soc/codecs/` ships es7134
-and es7241, neither of which is compatible. Worse, the vendor device tree
-declares the chip but leaves **i2s2 and the PDM controller disabled** and never
-references it from any DAI link, so there is no working configuration to copy
-either. Line-out, S/PDIF and HDMI audio all work.
+**MIC-IN is not wired up, in hardware.** The RK3328's internal codec is playback
+only, so the microphone input has to go through a separate ADC. The vendor
+device tree declares an Everest **ES7243** on i2c0 at 0x13 — but nothing answers
+there. Scanning every i2c controller on the SoC finds only the PMIC and the RTC,
+both on i2c1. The chip is not populated.
+
+Consistently with that, the vendor device tree leaves **i2s2 and the PDM
+controller disabled** and never references the ES7243 from any DAI link, so even
+Android had no capture path. And mainline has no driver for the part anyway
+(`sound/soc/codecs/` ships es7134 and es7241, neither compatible).
+
+Use a USB audio device if you need capture. Line-out, S/PDIF and HDMI playback
+all work.
 
 **Two-minute boot.** Not board-specific, but it bites on every Armbian image
 here: `systemd-networkd-wait-online` waits for `systemd-networkd`, which manages
@@ -190,6 +212,7 @@ Tested on Armbian with kernel 6.18 (`current`).
 | USB | all four connectors enumerate |
 | RS232 (DB9) | `/dev/ttyS1` |
 | RTC | HYM8563 as `rtc0` — timekeeping only, no wakealarm |
+| IR receiver | `rc0` + `/dev/lirc0`, NEC frames decode cleanly |
 | Audio | line-out, S/PDIF, HDMI — **not** mic-in |
 | microSD, eMMC, HDMI, watchdog | |
 

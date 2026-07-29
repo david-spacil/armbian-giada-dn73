@@ -54,6 +54,26 @@
 		};
 	};
 
+	/*
+	 * IR receiver on GPIO2_A2, fitted and working - a remote produces
+	 * clean NEC frames on the pin (9 ms leader, 4.5 ms space, ~560 us
+	 * bits, both address and command inversions checking out), so the part
+	 * is a demodulating receiver and rc-core can decode it directly.
+	 *
+	 * The vendor drives it from PWM3 in capture mode via
+	 * "rockchip,remotectl-pwm", a vendor-kernel driver with no mainline
+	 * equivalent. gpio-ir-receiver on the same pin does the same job.
+	 *
+	 * No keymap is set: the machine ships without a remote, so whichever
+	 * one gets used should be loaded with ir-keytable.
+	 */
+	ir-receiver {
+		compatible = "gpio-ir-receiver";
+		gpios = <&gpio2 RK_PA2 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&ir_int>;
+	};
+
 	gmac_clkin: external-gmac-clock {
 		compatible = "fixed-clock";
 		clock-frequency = <125000000>;
@@ -548,6 +568,12 @@
 
 		pmic_sleep_l: pmic-sleep-l {
 			rockchip,pins = <2 RK_PD2 RK_FUNC_GPIO &pcfg_pull_down>;
+		};
+	};
+
+	ir {
+		ir_int: ir-int {
+			rockchip,pins = <2 RK_PA2 RK_FUNC_GPIO &pcfg_pull_none>;
 		};
 	};
 

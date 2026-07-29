@@ -58,6 +58,37 @@
 		};
 	};
 
+	/*
+	 * IR receiver on GPIO2_A2. The part is fitted and demodulates: a
+	 * remote produces clean NEC frames on the pin, so rc-core decodes it
+	 * without the vendor's PWM-capture driver, which has no mainline
+	 * equivalent anyway. No keymap - load one with ir-keytable.
+	 */
+	fragment@6 {
+		target-path = "/";
+
+		__overlay__ {
+			ir-receiver {
+				compatible = "gpio-ir-receiver";
+				gpios = <&gpio2 2 1>;	/* GPIO2_A2, active low */
+				pinctrl-names = "default";
+				pinctrl-0 = <&ir_int>;
+			};
+		};
+	};
+
+	fragment@7 {
+		target = <&pinctrl>;
+
+		__overlay__ {
+			ir {
+				ir_int: ir-int {
+					rockchip,pins = <2 2 0 &pcfg_pull_none>;
+				};
+			};
+		};
+	};
+
 	/* RS232 on the DB9, with hardware flow control. Becomes /dev/ttyS1. */
 	fragment@4 {
 		target = <&uart1>;
