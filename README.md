@@ -25,7 +25,9 @@ PHY and the WiFi/BT combo are all soldered onto one Giada-designed board
 | — | Rockchip RK805-1 | PMIC |
 | U1800/U1801 | Samsung DDR3 | |
 
-Board photos are in [`foto_desky/`](foto_desky/).
+Board photos are in [`foto_desky/`](foto_desky/). The diagnostic method — recovering
+the vendor device tree, reading MDIO without the driver — is written up in
+[docs/diagnosing-a-mismatched-board.md](docs/diagnosing-a-mismatched-board.md).
 
 > The RK3328 model is the **DN73**. Giada's DN72 is a different machine built
 > around an RK3288 — its datasheet does not describe this board.
