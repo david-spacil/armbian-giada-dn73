@@ -11,9 +11,12 @@ separate [`armbian/build`](https://github.com/armbian/build) framework.
 
 Correctness cannot be established by running anything locally. A device tree that
 compiles, and even one that boots, says nothing about whether it describes *this*
-board — see `docs/diagnosing-a-mismatched-board.md`, which is the writeup of
-exactly that trap. Verification means booting the hardware and checking each
-peripheral.
+board — `docs/diagnosing-a-mismatched-board.md` is the writeup of exactly that
+trap. Verification means booting the hardware and checking each peripheral.
+
+`README.md` is the user-facing document and stays that way: what the board is,
+how to build an image, what to expect. The reasoning, the measurements and the
+dead ends live here and in `docs/`.
 
 ## Commands
 
@@ -70,8 +73,9 @@ Two differences between the forms are deliberate, not oversights:
 - The board DTS uses `RK_PA2`-style macros; the overlays use raw pin numbers
   (`<0 2 0 ...>`) because plugin sources here include no bindings headers.
 - The board DTS sets `rtc0 = &hym8563` in `aliases`; the overlay cannot, because
-  the RK805 has already taken `rtc0` by the time it probes. The overlay leaves
-  the RTC as `rtc1` and says so in a comment.
+  the RK805 has already taken `rtc0` by the time it probes. Overlays cannot
+  usefully reorder aliases at all, which is also why the overlay path leaves the
+  ethernet MAC problem below unfixed.
 
 ### The `userpatches` path is exact
 
@@ -85,25 +89,106 @@ is **silently ignored** and the image builds against the wrong device tree.
 `giada-dn73.csc` lists `KERNEL_TARGET="current,edge"`, but only `current` is
 tested (`KERNEL_TEST_TARGET`), and only `current` has a `dt/` directory here.
 
-## Why the board needs any of this
+## Why the board needs each thing it needs
 
-Four independent things, described in full in `README.md`. The short version,
-because it shapes every change:
+### Ethernet: three conditions that must hold simultaneously
 
-Ethernet needs three conditions satisfied **simultaneously** — `vcc_phy` gated on
-GPIO0_A0, reset actively driven on GPIO1_D0, and the RTL8211E declared as an
-`mdio` child at address 1. The last one is a driver trap:
-`of_mdiobus_register()` sets `phy_mask = ~0`, so an `mdio` node with no PHY
-children means no bus scan happens at all. The vendor DT has no `mdio` node and
-so relied on autoscan.
+The RJ45 goes through an external RTL8211E on `gmac2io` (`ff540000`). Stock
+Armbian disables it and enables `gmac2phy` (`ff550000`, internal 100M) instead,
+which on this board is connected to nothing.
 
-Separately, the dusun profile modelled USB VBUS enables on GPIO3_A5/A7, which on
-this board are uart1 RTS/CTS. One wrong pin cost the serial port entirely, and
-the pins were harmless in their own right — measured, all four USB connectors
-enumerate with both driven low, because VBUS is not gated on this revision.
+1. **`vcc_phy` is switched by GPIO0_A0.** It is not a permanently powered rail;
+   the vendor exposes it through a pinctrl group named, literally,
+   `eth-power-gpio`. Stock Armbian models `vcc_phy` as a plain always-on
+   regulator with no GPIO *and* at 1.8 V instead of 3.3 V. This was the primary
+   cause — the PHY never started.
+2. **Reset on GPIO1_D0 must be actively driven,** active low. Nothing else holds
+   the line and the board pulls it down, so without an explicit `reset-gpios` the
+   PHY stays silent even once its supply is on.
+3. **The PHY must be declared as an `mdio` child** at address 1.
+   `of_mdiobus_register()` sets `phy_mask = ~0`, so:
+   - no `mdio` node → full autoscan of all 32 addresses
+   - `mdio` node with PHY children → those children are registered
+   - `mdio` node with no children → **nothing is scanned, nothing is registered**
 
-U-Boot is borrowed from the Dusun DSOM 010R on purpose. The kernel loads its own
-DTB, so the name in the bootloader has no functional effect.
+   The middle-ground intuition ("the node just configures the bus, scanning still
+   happens") is wrong, and the resulting `no phy found` is indistinguishable from
+   a genuinely absent PHY. The vendor DT sidesteps this by having no `mdio` node.
+
+Symptom of any of the three: MDIO reads return `0x00000000` and the RJ45 link
+LEDs never light. A brute-force GPIO sweep cannot find this, because testing one
+pin at a time can never satisfy a two-pin precondition — see `docs/`.
+
+The RGMII pin group `rgmiim1_pins` is the only one RK3328 has for `gmac2io`, and
+it collides with `sdio`, `sdio_pwrseq` and `uart0`. All three are disabled here;
+none of them serves anything on this board (no SDIO chip — the WiFi is USB — and
+the console is on `ttyS2` / `ff130000`).
+
+### The MAC address, and why an alias fixes it
+
+Rockchip U-Boot derives a stable MAC from the SoC cpuid and writes it into
+`local-mac-address` on whatever node **`ethernet0`** aliases. On the dusun device
+tree that is `gmac2phy`, so `gmac2io` got nothing and the kernel invented a random
+address on every boot — a different DHCP lease each time. Setting
+`ethernet0 = &gmac2io` fixes both that and the interface name (`end0`, because
+udev then sees it as onboard device 0). Verified stable across a reinstall.
+
+### WiFi: a vendor binding that does not exist in mainline
+
+The RTL8821CU hangs off the GL850G hub but has its own supply pin, **GPIO3_B0**.
+The vendor drives it from a `wireless-wlan` node with a `WIFI,poweren_gpio`
+property — a Rockchip vendor-kernel binding with no mainline equivalent. Holding
+the line high with a `gpio-hog` is enough; `rtw88_8821cu` and `btusb` both then
+appear, and the firmware ships with Armbian.
+
+### The USB VBUS pins that cost the serial port
+
+The dusun profile models the VBUS enables on **GPIO3_A5** and **GPIO3_A7** and
+drives them high at boot. On this board those are **uart1 RTS and CTS** — the DB9
+on the back panel. Pinctrl hands them to the regulators, uart1 can never claim
+them, and the serial port silently does not exist. The real enables are GPIO0_A2
+(OTG) and GPIO2_C5 (host).
+
+Two things generalise from this. The damage from a wrong pin surfaces on a
+peripheral unrelated to the node that got it wrong — nobody investigating a
+missing serial port starts by reading the USB regulators. And the wrong pins were
+*harmless in their own right*: measured with both driven low, all four USB
+connectors still enumerate, because VBUS is not gated on this revision at all. **A
+GPIO assignment that appears to work is not evidence that it is correct; it may
+simply be connected to nothing.**
+
+### The RTC, and the interrupt that is deliberately absent
+
+An HYM8563 sits on i2c1 at 0x51 next to the PMIC, with a CR2032 on the `BAT CON`
+connector. Stock Armbian never looks for it and falls back to the RK805's RTC.
+
+The vendor points `irq_gpio` at GPIO2_C4, but nothing on the SoC moves when the
+alarm fires: with the alarm flag latched in the chip, every GPIO bank's
+`EXT_PORT` register reads the same as before. The INT line goes to the power
+circuitry instead, which is the only way the datasheet's *"RTC: set up
+independently every day, a week as a cycle"* can work — scheduled power-on has to
+act while the SoC is off.
+
+So the interrupt is omitted on purpose. Describing it would produce a `wakealarm`
+that accepts a time and never fires, which is worse than no `wakealarm`.
+Implementation notes for the chip, if anyone revisits it: the alarm has **minute
+granularity**, and in `CTRL2` bit 1 is AIE and bit 3 is AF.
+
+### The IR receiver
+
+The vendor runs it from PWM3 in capture mode through `rockchip,remotectl-pwm`, a
+vendor-kernel driver with no mainline counterpart — presumably why nobody bothers
+with IR on RK3328 boards.
+
+It is not needed. The part on GPIO2_A2 is a *demodulating* receiver, so rc-core
+handles it directly via `gpio-ir-receiver`. Measured with a random remote: a
+8.92 ms leader mark, a 4.42 ms space, ~560 µs bit marks, with both the address and
+the command inversion bytes checking out — textbook NEC. One capture gave
+scancode `0x0472` plus two 9 ms + 2.25 ms repeat frames.
+
+No keymap is set, since the machine ships without a remote, and the active
+protocol is therefore `[lirc]` (raw). Getting key events needs `ir-keytable -p nec`
+and a keymap.
 
 ## Working on the device tree
 
@@ -111,24 +196,60 @@ DTB, so the name in the bootloader has no functional effect.
 the Android DT `GIADA JHS557 ANDROID Q`, recovered with
 `scripts/extract-dtb.py`. Its bindings are Rockchip vendor-kernel ones
 (`WIFI,poweren_gpio`, `wlan-platdata`) that mainline does not implement —
-translate the intent, not the binding.
+translate the intent, not the binding. And as the RTC interrupt and the mic input
+both show, the vendor DT also describes things that are not there.
 
-**Do not describe an interrupt you have not seen move.** The vendor points the
-HYM8563's `irq_gpio` at GPIO2_C4 and no SoC pin moves when the alarm fires; the
-line goes to the power circuitry, which is what makes scheduled power-on work
-while the SoC is off. The interrupt is deliberately omitted, because describing
-it would only produce a `wakealarm` that accepts a time and never fires. The same
-applies to anything else taken from the vendor DT on faith.
+**Do not describe an interrupt, or any peripheral, you have not seen work.**
 
 **When measuring GPIO levels, sample each state more than once.** A one-shot
 before/after diff of `GPIO_EXT_PORT` produced a convincing false positive on
-GPIO1_B5, which is `mac_rxclk` — a 125 MHz clock. Any pin carrying a clock or
-fast data will manufacture a difference.
+GPIO1_B5, which is `mac_rxclk` in `rgmiim1_pins` — a 125 MHz clock. Repeating the
+snapshot eight times per state showed it and its neighbours flipping at random in
+*both* states. Any pin carrying a clock or fast data will manufacture a difference
+for you.
 
-Known-absent hardware, so it does not get re-investigated: the ES7243 mic ADC is
-**not populated** (i2c scan finds only the PMIC at 0x18 and the RTC at 0x51), and
-the RK3328 has no PCIe at all, so the mini-PCIe slot is USB and needs nothing in
-the DT.
+Faster iteration than rebooting: the stmmac driver can be unbound and rebound,
+which re-runs MDIO registration and the bus scan in ~2.5 s.
+
+```sh
+echo ff540000.ethernet > /sys/bus/platform/drivers/rk_gmac-dwmac/unbind
+echo ff540000.ethernet > /sys/bus/platform/drivers/rk_gmac-dwmac/bind
+```
+
+### Hardware that is not there
+
+Settled, so it does not get re-investigated:
+
+- **The ES7243 mic ADC is not populated.** The RK3328's internal codec is playback
+  only, so capture needs a separate ADC; the vendor DT declares one on i2c0 at
+  0x13 and nothing answers. Scanning every i2c controller on the SoC finds only
+  the PMIC (0x18) and the RTC (0x51), both on i2c1 — note that **i2c3 ACKs all
+  112 addresses because SDA is stuck low**, which is not a bus full of devices.
+  Consistently, the vendor DT leaves i2s2 and the PDM controller disabled and
+  never references the ES7243 from any DAI link, so even Android had no capture
+  path. Mainline has no driver for the part either (`sound/soc/codecs/` ships
+  es7134 and es7241, neither compatible). Use USB audio.
+- **There is no PCIe.** RK3328 has none, so the full-size mini-PCIe slot is USB,
+  on the hub's fourth downstream port. The advertised 3G/4G is a USB modem in a
+  mini-PCIe form factor and needs nothing in the device tree.
+
+### Two boot stages, two different preference orders
+
+Conflating these wastes an evening. The boot ROM picks the *bootloader* and
+prefers eMMC. That U-Boot then picks the *operating system*, and its
+`boot_targets=mmc1 mmc0 nvme scsi usb pxe dhcp spi` puts the SD card first (in
+the U-Boot DT, `mmc0` is eMMC at `ff520000` and `mmc1` is SD at `ff500000`).
+
+So a box with an existing eMMC install runs the old bootloader with the new
+kernel, even though the card carries a complete bootloader of its own — verified
+by finding the card's sector 64 byte-identical to the built image. Always read
+`/proc/device-tree/chosen/u-boot,version` before concluding anything about a
+card-booted system. After `armbian-install` writes the bootloader to eMMC, the
+card becomes a fallback at both stages, and it is worth removing it afterwards so
+that "testing eMMC" is not silently testing the card.
+
+Rockchip's idbloader at sector 64 is RC4-obfuscated, which is why that area looks
+like random bytes rather than anything greppable.
 
 ## Conventions
 
@@ -142,16 +263,16 @@ the DT.
   that is the point of it.
 - Commit messages likewise: imperative subject, body explaining what was measured
   and what it ruled out.
-- `README.md` doubles as the project's status record — its Status table and Known
-  quirks sections are updated when hardware verification happens, not separately.
+- `README.md`'s Status table and Known quirks sections are the project's status
+  record, updated when hardware verification happens, not separately.
 
 ## The repository is public
 
 It was scrubbed before publication and must stay that way:
 
-- **No internal addresses** (`10.0.0.x`, Tailscale IPs, internal apt repos) and
-  **no per-unit MAC addresses** — a MAC belongs to one box, not in a shared
-  profile. `overlay/gmac2io-rtl8211.dts` shows the derivation from
-  `/proc/device-tree/serial-number` as a commented-out example instead.
+- **No internal addresses** (`10.0.0.x`, Tailscale IPs, internal apt repos), **no
+  per-unit MAC addresses and no SoC serial numbers** — those belong to one box,
+  not in a shared profile. `overlay/gmac2io-rtl8211.dts` shows the derivation from
+  `/proc/device-tree/serial-number` with placeholder hex instead.
 - **Do not commit vendor firmware or Giada's PDFs.** They are third-party
   copyrighted material; the archives are large and live outside this repo.
