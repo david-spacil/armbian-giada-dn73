@@ -266,17 +266,83 @@ fi
 # actually forbids are matched, so version strings do not trip it. The
 # placeholder MAC the ethernet overlay documents its derivation with is
 # deliberately allowed.
-hygiene=$(grep -rnEi \
-	'\b(10\.[0-9]{1,3}|192\.168|172\.(1[6-9]|2[0-9]|3[01])|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7]))\.[0-9]{1,3}\.[0-9]{1,3}\b|\b([0-9a-f]{2}:){5}[0-9a-f]{2}\b' \
-	--include='*.md' --include='*.dts' --include='*.csc' --include='*.sh' --include='*.py' \
-	--exclude='check-upstream.sh' "$REPO_ROOT" 2>/dev/null \
-	| grep -viE '\b(02:)?aa:bb:cc:dd:ee\b|xx:xx:xx' || true)
+#
+# The file list comes from git rather than from a recursive walk, so ignored
+# scratch files are genuinely out of scope and the wording below stays true.
+mapfile -t scan < <(git -C "$REPO_ROOT" ls-files -- \
+	'*.md' '*.dts' '*.csc' '*.sh' '*.py' 2>/dev/null | grep -v 'check-upstream\.sh$')
 
-if [[ -n $hygiene ]]; then
-	ERROR "possible private address or per-unit MAC in a tracked file:"
-	sed 's/^/          /' <<< "$hygiene"
+if [[ ${#scan[@]} -eq 0 ]]; then
+	WARN "could not list tracked files with git - hygiene check skipped"
 else
-	OK "no private addresses or per-unit MACs in tracked files"
+	hygiene=$( (cd "$REPO_ROOT" && grep -nEi \
+		'\b(10\.[0-9]{1,3}|192\.168|172\.(1[6-9]|2[0-9]|3[01])|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7]))\.[0-9]{1,3}\.[0-9]{1,3}\b|\b([0-9a-f]{2}:){5}[0-9a-f]{2}\b' \
+		-- "${scan[@]}") 2>/dev/null \
+		| grep -viE '\b(02:)?aa:bb:cc:dd:ee\b|xx:xx:xx' || true)
+
+	if [[ -n $hygiene ]]; then
+		ERROR "possible private address or per-unit MAC in a tracked file:"
+		sed 's/^/          /' <<< "$hygiene"
+	else
+		OK "no private addresses or per-unit MACs in tracked files"
+	fi
+fi
+echo
+
+# ---------------------------------------------------------------------------
+echo "[8] upstream's own board config validator"
+# Armbian validates config/boards/* in CI (maintenance-validate-board-configs.yml).
+# Running their script rather than reimplementing its rules means we inherit
+# future tightening for free: a field that becomes required upstream shows up
+# here at the next weekly run instead of at the next build.
+#
+# Two warnings are deliberate and expected, so only a third one is news:
+#   BOARD_MAINTAINER  left empty on purpose - this profile is not going upstream,
+#                     and 114 of Armbian's 212 community boards leave it empty too
+#   INTRODUCED        no primary source for the year this board shipped; a guess
+#                     in a public repo is worse than a blank
+EXPECTED_WARNINGS=(BOARD_MAINTAINER INTRODUCED)
+
+validator=$(fetch "${RAW}/tools/validate-board-config.py")
+if [[ -z $validator ]]; then
+	WARN "could not fetch tools/validate-board-config.py - board config unvalidated"
+elif ! command -v python3 > /dev/null; then
+	WARN "python3 not available - board config unvalidated"
+else
+	vtmp=$(mktemp -d)
+	trap 'rm -rf "$vtmp"' EXIT
+	printf '%s' "$validator" > "${vtmp}/validate-board-config.py"
+
+	# The validator keys its rule set off the file extension, so the copy has to
+	# keep the .csc suffix.
+	cp "$OURS" "${vtmp}/giada-dn73.csc"
+	vout=$(python3 "${vtmp}/validate-board-config.py" "${vtmp}/giada-dn73.csc" 2>&1)
+	vrc=$?
+
+	if [[ $vrc -ne 0 ]]; then
+		ERROR "upstream's validator rejects giada-dn73.csc"
+		sed 's/^/          /' <<< "$vout"
+	else
+		OK "no errors from upstream's validator"
+	fi
+
+	# Warnings do not affect the validator's exit code, so pick them apart here.
+	unexpected=()
+	while read -r field; do
+		[[ -z $field ]] && continue
+		expected=0
+		for e in "${EXPECTED_WARNINGS[@]}"; do
+			[[ $field == "$e" ]] && expected=1
+		done
+		[[ $expected -eq 0 ]] && unexpected+=("$field")
+	done < <(grep '^WARNING:' <<< "$vout" | sed 's/.*\.csc: \([A-Z_]*\):.*/\1/')
+
+	if [[ ${#unexpected[@]} -eq 0 ]]; then
+		OK "only the ${#EXPECTED_WARNINGS[@]} deliberate warnings (${EXPECTED_WARNINGS[*]})"
+	else
+		WARN "new warning(s) from upstream's validator: ${unexpected[*]}"
+		NOTE "upstream tightened its rules - decide whether to satisfy them"
+	fi
 fi
 echo
 
