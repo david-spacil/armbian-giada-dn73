@@ -1,7 +1,17 @@
 #!/bin/bash
 #
 # Runs inside the image chroot at the end of the build.
-# Arguments: $1 RELEASE, $2 LINUXFAMILY, $3 BOARD, $4 BUILD_DESKTOP, $5 ARCH
+# Arguments: $RELEASE $LINUXFAMILY $BOARD $BUILD_DESKTOP $ARCH
+#
+# Shape follows config/templates/customize-image.sh.template. The positional
+# assignments below are not decoration: without them $RELEASE is empty here, and
+# the case statement in Main only appeared to work because its single arm is *).
+
+RELEASE=$1
+LINUXFAMILY=$2
+BOARD=$3
+BUILD_DESKTOP=$4
+ARCH=$5
 
 Main() {
 	assert_correct_device_tree
