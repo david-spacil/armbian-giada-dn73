@@ -167,6 +167,12 @@ DTS sets the alias properly.
 `aliases` is what makes udev see the port as onboard device 0. Firewall rules and
 scripts carried over from a dusun-based install will name the wrong interface.
 
+**WiFi is `wlx<mac>`, not `wlan0`** — here `wlx347563ad2392`. The RTL8821CU is a
+USB device with no DT node, so udev has no onboard index to name it from and falls
+back to the MAC address; `dmesg` records the `renamed from wlan0`. Unlike the
+ethernet case this is not fixable from the device tree. Override it with a
+`systemd.link` file if a stable short name matters.
+
 **MAC address** — fixed by the same alias, and worth explaining because it looks
 unrelated. Rockchip U-Boot derives a stable MAC from the SoC cpuid and writes it
 into `local-mac-address` on whatever node `ethernet0` points at. On the dusun
@@ -175,11 +181,19 @@ a random address on every boot — a different DHCP lease each time. With the al
 corrected, U-Boot's address lands on the right node; verified stable across
 reboots.
 
-**Running from SD does not mean running your U-Boot.** The RK3328 boot ROM
-prefers eMMC, so a box with an existing eMMC install boots that bootloader and
-only then picks the kernel up from the card — `/proc/device-tree/chosen/u-boot,version`
-gives away which one actually ran. The board's own U-Boot takes over after
-`armbian-install`.
+**Running from SD does not mean running your U-Boot.** Two stages pick two
+different things, in two different orders, and conflating them wastes an evening.
+
+The boot ROM picks the *bootloader* and prefers eMMC. That U-Boot then picks the
+*operating system*, and its `boot_targets=mmc1 mmc0` puts the card first. So a box
+with an existing eMMC install runs the old bootloader and the new kernel — even
+though the card carries a complete bootloader of its own (verified: sector 64 on
+the card was byte-identical to the built image).
+
+`/proc/device-tree/chosen/u-boot,version` is what gives it away, and it is worth
+reading before concluding anything about a card-booted system. After
+`armbian-install` writes the bootloader to eMMC the version string changes to the
+board's own build, and the card becomes a fallback at both stages.
 
 **MIC-IN is not wired up, in hardware.** The RK3328's internal codec is playback
 only, so the microphone input has to go through a separate ADC. The vendor
@@ -216,21 +230,23 @@ vendor firmware is available:
 
 ## Status
 
-Built and booted: Armbian 26.08.0-trunk, Debian trixie, kernel 6.18.40
-(`current`), full BTF. Verified on hardware from an image built by this profile,
-with no overlays applied.
+Armbian 26.08.0-trunk, Debian trixie, kernel 6.18.40 (`current`), full BTF.
+Verified on hardware from an image built by this profile, with no overlays
+applied — first from SD, then **installed to eMMC** and re-verified running
+standalone with the card removed and this profile's own U-Boot
+(`2026.04_armbian`) in charge of both stages.
 
 | | |
 |---|---|
-| Gigabit ethernet | `end0`, 1 Gbps full duplex, stable U-Boot-supplied MAC |
-| WiFi + Bluetooth | `rtw88_8821cu`, `hci0` |
+| Gigabit ethernet | `end0`, 1 Gbps full duplex, stable U-Boot-supplied MAC across reinstall |
+| WiFi + Bluetooth | `rtw88_8821cu` (as `wlx<mac>`), scans; `hci0` with RTL firmware loaded |
 | USB | all four connectors enumerate |
 | RS232 (DB9) | `/dev/ttyS1` |
 | RTC | HYM8563 as `rtc0` — timekeeping only, no wakealarm |
 | IR receiver | `rc0` + `/dev/lirc0`, NEC frames decode cleanly |
 | Audio | line-out, S/PDIF, HDMI — **not** mic-in |
 | microSD, eMMC, HDMI, watchdog | |
-| Boot time | 23 s (5 s kernel + 18 s userspace), no failed units |
+| Boot time | 21.5 s (4.9 s kernel + 16.6 s userspace), no failed units |
 
 Not submitted upstream. U-Boot is borrowed from the Dusun DSOM 010R — same SoC,
 same power design, and it boots this board fine; the kernel loads its own DTB, so
