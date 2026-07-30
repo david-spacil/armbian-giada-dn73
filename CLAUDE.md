@@ -82,15 +82,18 @@ before it writes the output file, and you get a silent no-op.
 
 ```
 userpatches/config/boards/giada-dn73.csc          board config (U-Boot, kernel target)
-userpatches/kernel/archive/rockchip64-6.18/dt/    board DTS, for freshly built images
+userpatches/kernel/archive/rockchip64-6.18/dt/    board DTS for BRANCH=current
+userpatches/kernel/archive/rockchip64-7.1/dt/     the same DTS for BRANCH=edge
 userpatches/customize-image.sh                     runs in the image chroot
 overlay/*.dts                                      same fixes, for existing installs
-scripts/                                           two diagnostic tools
+scripts/extract-dtb.py, mdio-raw-scan.py           diagnostic tools
+scripts/check-upstream.sh                          reports drift from armbian/build
+.github/workflows/upstream-drift.yml               runs it weekly, files an issue
 docs/diagnosing-a-mismatched-board.md              method, and the dead ends
 ```
 
-The two scripts generalise to any Rockchip board whose vendor firmware is
-available. `extract-dtb.py` pulls device tree blobs out of a Rockchip `update.img`
+The two diagnostic scripts generalise to any Rockchip board whose vendor
+firmware is available. `extract-dtb.py` pulls device tree blobs out of a Rockchip `update.img`
 by scanning for the FDT magic — this is how the board's GPIO assignments were
 recovered. `mdio-raw-scan.py` reads MDIO straight from the DWMAC1000 registers via
 `/dev/mem`, bypassing phylib, and distinguishes "bus floating high" from "held low"
@@ -117,13 +120,101 @@ Two differences between the forms are deliberate, not oversights:
 
 `userpatches/kernel/archive/<family>-<version>/dt/` — the `archive/` component is
 mandatory, and `<version>` must match what the board's `KERNEL_TARGET` resolves
-to. `BRANCH=current` for `rockchip64` currently means 6.18, set as
-`KERNEL_MAJOR_MINOR` in `config/sources/families/include/rockchip64_common.inc`
-upstream. When upstream moves to 6.19 the directory has to be renamed, or the DTS
-is **silently ignored** and the image builds against the wrong device tree.
+to. The versions live in `KERNEL_MAJOR_MINOR` in
+`config/sources/families/include/rockchip64_common.inc` upstream: `current` is
+6.18 and `edge` is 7.1. When either moves the directory has to be renamed, or
+the DTS is **silently ignored** and the image builds against the wrong device
+tree.
 
-`giada-dn73.csc` lists `KERNEL_TARGET="current,edge"`, but only `current` is
-tested (`KERNEL_TEST_TARGET`), and only `current` has a `dt/` directory here.
+`giada-dn73.csc` lists `KERNEL_TARGET="current,edge"`, so **both** versions need
+a directory, and the DTS is kept as two identical copies:
+
+```
+userpatches/kernel/archive/rockchip64-6.18/dt/rk3328-giada-dn73.dts   BRANCH=current
+userpatches/kernel/archive/rockchip64-7.1/dt/rk3328-giada-dn73.dts    BRANCH=edge
+```
+
+`diff` between them must come back empty. `scripts/check-upstream.sh` enforces
+that, along with everything else below. Only `current` is tested
+(`KERNEL_TEST_TARGET`); the `edge` copy exists so that building it does not
+silently fall back to a device tree for a different board.
+
+## Keeping up with upstream
+
+### How the DTS actually reaches the build
+
+Worth knowing precisely, because the failure mode is silent. Upstream declares
+the mechanism in `patch/kernel/archive/rockchip64-<version>/0000.patching_config.yaml`:
+
+```yaml
+dts-directories:
+  - { source: "dt", target: "arch/arm64/boot/dts/rockchip" }
+```
+
+The patcher walks its root directories — the framework's own `patch/` and our
+`userpatches/` — looking for that same relative path in each, keys the files it
+finds by basename, and lets **userpatches win**. That is the whole of why this
+profile works without forking `armbian/build`.
+
+The dangerous line is in `lib/tools/common/dt_makefile_patcher.py`:
+
+```python
+if not os.path.isdir(full_path_source):
+    continue
+```
+
+A directory whose name no longer matches `KERNEL_MAJOR_MINOR` is skipped with no
+error and only a `log.debug`. The build succeeds, the image ships the
+`dusun-dsom-010r` device tree, and the board comes up with no ethernet, no WiFi,
+no serial and no RTC. `userpatches/customize-image.sh` now fails the build if
+`rk3328-giada-dn73.dtb` is missing from the rootfs or does not contain the
+string `Giada DN73`, which is the only cheap way to make that loud.
+
+There is a gift in the same file: when a file we ship already exists upstream,
+the patcher warns *"Target file already exists; will overwrite it; consider if
+it should be removed."* That is the automatic signal that our DTS has landed in
+mainline and this repository can shed weight.
+
+### What this profile is actually pinned to
+
+`giada-dn73.csc` is a copy of upstream's `config/boards/dusun-dsom-010r.csc`
+with the board name and `BOOT_FDT_FILE` changed. Everything else —
+`BOOTCONFIG`, `BOOTBRANCH_BOARD`, `BOOTPATCHDIR`, `BOOT_SCENARIO`,
+`BOARDFAMILY` — is inherited verbatim. So "keeping up with upstream" in practice
+means **tracking that one board**, not the framework in general. When Armbian
+bumps the Dusun board's U-Boot pin, this profile should almost certainly follow.
+
+Two of those dependencies are not mainline at all, which is easy to assume
+wrongly:
+
+- `dusun-dsom-010r-rk3328_defconfig` is **not** in U-Boot. Armbian supplies it,
+  and it moved shape between releases — a patch under
+  `patch/u-boot/v2025.10/board_dusun-dsom-010r/`, a bare file under
+  `patch/u-boot/v2026.04/defconfig/`.
+- `rk3328-dusun-dsom-010r.dts` is **not** in the kernel. Armbian ships it as a
+  bare DTS through the same `dt/` mechanism this profile uses.
+
+If Armbian ever drops the Dusun board, both go with it, and the overlays lose
+the device tree they are written against.
+
+### The bump procedure
+
+`scripts/check-upstream.sh` reports all of this without building anything, and
+`.github/workflows/upstream-drift.yml` runs it weekly and files an issue. When
+it says the kernel version moved:
+
+1. `git mv userpatches/kernel/archive/rockchip64-<old>/ .../rockchip64-<new>/`,
+   for whichever of `current` and `edge` moved. Keep the copies identical.
+2. Diff the new `rk3328.dtsi` against the old one for the nodes this board
+   overrides — `opp-table-0` (the DTS deletes it), `opp-table-gpu` (its 1075000
+   µV is why `vdd_logic` needs a 712500 floor), `gmac2io`, `i2s1`, `codec`,
+   `tsadc`. The checker watches the first two; the rest need eyes.
+3. Re-run `scripts/check-upstream.sh` — it should come back clean.
+4. Build, install, and run the smoke test in `TESTING.md`. The
+   `customize-image.sh` assertion catches a wrong device tree, but only booting
+   the board catches a wrong *value* in the right device tree.
+5. Update the reference platform table in `TESTING.md` with what was actually
+   tested. If only `current` was booted, say so.
 
 ## Why the board needs each thing it needs
 

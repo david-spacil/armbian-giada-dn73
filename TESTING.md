@@ -173,7 +173,7 @@ throughput collapse was not.
 | Path | Status | Notes |
 |---|---|---|
 | `BRANCH=current` (6.18) | ✅ | the reference build |
-| `BRANCH=edge` | ❌ | listed in `KERNEL_TARGET` but never built. **It would silently use the wrong device tree** — `userpatches/kernel/archive/` only has a `rockchip64-6.18` directory, so a different kernel version finds no DTS. Create the matching directory first |
+| `BRANCH=edge` | ❌ | never built, but no longer silently wrong: `edge` resolves to kernel 7.1, and `userpatches/kernel/archive/rockchip64-7.1/dt/` now carries an identical copy of the DTS. The two copies must be kept in sync by hand — `diff` them before trusting an edge build |
 | `RELEASE=trixie`, CLI | ✅ | the reference build |
 | Other releases / `BUILD_DESKTOP=yes` | ❌ | untested |
 | `KERNEL_BTF=yes` | ✅ | `/sys/kernel/btf/vmlinux` present, 6 213 086 B. Needs ~6.5 GB RAM on the build host |

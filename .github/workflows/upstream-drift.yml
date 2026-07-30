@@ -1,0 +1,95 @@
+name: Upstream drift
+
+# This profile lives outside armbian/build and is pinned to it in several
+# places - most dangerously the userpatches/kernel/archive/rockchip64-<version>/
+# directory name, which the build silently ignores once it stops matching.
+# scripts/check-upstream.sh compares the pins against upstream; this runs it
+# weekly and files an issue when something moves, so the drift is noticed
+# before somebody builds an image rather than after.
+
+on:
+  schedule:
+    # Mondays, 06:17 UTC. Off the hour, since scheduled runs bunch up there.
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+  push:
+    paths:
+      - 'userpatches/**'
+      - 'overlay/**'
+      - 'scripts/check-upstream.sh'
+      - '.github/workflows/upstream-drift.yml'
+  pull_request:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile the overlays
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq device-tree-compiler
+          for o in overlay/*.dts; do
+            echo "dtc $o"
+            dtc -@ -I dts -O dtb -o "/tmp/$(basename "$o" .dts).dtbo" "$o"
+          done
+
+      - name: Check against upstream
+        id: check
+        run: |
+          set +e
+          ./scripts/check-upstream.sh 2>&1 | tee /tmp/drift.txt
+          echo "status=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Summarise
+        run: |
+          {
+            echo '## check-upstream.sh'
+            echo
+            echo '```'
+            sed 's/\x1b\[[0-9;]*m//g' /tmp/drift.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Only scheduled and manual runs file issues. On a push the job status is
+      # the signal and an issue would just be noise.
+      - name: File or update an issue
+        if: >
+          steps.check.outputs.status != '0' &&
+          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          body=$(printf '%s\n\n```\n%s\n```\n' \
+            "\`check-upstream.sh\` exited ${{ steps.check.outputs.status }} on $(date -u +%Y-%m-%d)." \
+            "$(sed 's/\x1b\[[0-9;]*m//g' /tmp/drift.txt)")
+
+          existing=$(gh issue list --label upstream-drift --state open \
+                       --json number --jq '.[0].number')
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh label create upstream-drift --color BFD4F2 \
+              --description "armbian/build moved under this profile" 2>/dev/null || true
+            gh issue create --title "Upstream drift detected" \
+              --label upstream-drift --body "$body"
+          fi
+
+      # Exit 1 means a build would now produce a wrong or failing image, so the
+      # job goes red. Exit 2 means upstream moved and somebody has to decide -
+      # worth seeing, not worth blocking on.
+      - name: Fail on a broken pin
+        if: steps.check.outputs.status == '1'
+        run: |
+          echo "::error::check-upstream.sh reports a broken pin - see the job summary"
+          exit 1
+
+      - name: Note that upstream moved
+        if: steps.check.outputs.status == '2'
+        run: echo "::warning::upstream moved; nothing is broken but the differences want a decision"
