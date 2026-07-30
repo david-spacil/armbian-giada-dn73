@@ -74,21 +74,33 @@ Compared with running the stock `dusun-dsom-010r` profile on this hardware:
 
 Verified on hardware, Armbian 26.08.0-trunk / Debian trixie / kernel 6.18.40
 `current`, installed to eMMC and running from it with no overlays applied:
-gigabit ethernet with a stable MAC, WiFi, Bluetooth, all four USB connectors,
-`/dev/ttyS1`, the RTC as `rtc0`, IR reception, HDMI console, microSD and eMMC —
-booting in 21.5 s with no failed units.
+gigabit ethernet at line rate (935/941 Mb/s), a stable MAC, WiFi, Bluetooth, all
+four USB connectors, `/dev/ttyS1`, the RTC as `rtc0`, IR reception, HDMI console,
+microSD and eMMC — booting in 21.5 s with no failed units.
 
-Several of those were confirmed to initialise without the function itself being
+The GPU works through `lima` (Mali-450, GLES 2.0), and both hardware video
+decoders work through GStreamer — 4K HEVC at 92 fps for 2.6 ms of CPU per frame,
+against 17 fps in software. Ten minutes of CPU, GPU and VPU load together peaked
+at 75.8 °C with no throttling.
+
+Several things were confirmed to initialise without the function itself being
 exercised, and a fair amount was never tested at all: the COM port carrying data,
-audio playback, the watchdog, the mini-PCIe slot, suspend/resume, thermals under
-load, GPU and video decode, the `edge` branch, and the `dn73-peripherals.dts`
-overlay. **[TESTING.md](TESTING.md) has the row-by-row status, with a command for
-each gap** — start there before trusting anything on this list.
+audio actually being audible, the watchdog biting, the mini-PCIe slot,
+suspend/resume, the `edge` branch, and the `dn73-peripherals.dts` overlay on a
+running system. WiFi associates, but often only after several attempts.
+**[TESTING.md](TESTING.md) has the row-by-row status, with a command for each
+gap** — start there before trusting anything on this list.
 
 ## Notes
 
 - Interfaces are `end0` and `wlx<mac>`, not `eth0` and `wlan0`. Scripts carried
   over from a dusun-based install will name the wrong one.
+- Hardware video decode needs GStreamer. Debian's `ffmpeg` cannot drive these
+  decoders — they are stateless V4L2 request-API devices and it has no
+  `v4l2request` hwaccel. `gstreamer1.0-plugins-bad` provides `v4l2slh264dec` and
+  `v4l2slh265dec`, which find the hardware by themselves.
+- Do not key anything off `/dev/videoN`: the numbers swap between boots. Match on
+  the driver name from `v4l2-ctl --info`.
 - Mic-in cannot work: the ADC the vendor device tree declares is not populated.
   Use USB audio for capture.
 - The RK3328 model is the **DN73**. Giada's DN72 is a different machine built

@@ -277,6 +277,29 @@ peaking at 75.8 °C with no throttling and no errors. The rail does sit at
 The 500 MHz OPP is still dropped, for an unrelated reason: `lima` reports the
 clock parent at 491.52 MHz, below what that OPP asks for.
 
+### Video decode: two blocks, and a userspace that has to be GStreamer
+
+Both are stateless V4L2 request-API decoders — their coded formats are named
+"Parsed Slice Data", which is how you tell. Debian's `ffmpeg` cannot drive them:
+no `v4l2request` hwaccel, and its `h264_v4l2m2m` / `hevc_v4l2m2m` are the
+*stateful* wrappers for a different kind of device. GStreamer 1.26's
+`v4l2codecs` plugin does, with no configuration.
+
+`rkvdec` (`platform:rkvdec`) handles HEVC, H.264 and VP9; the Hantro block at
+`ff350000` handles MPEG-2 and VP8. Both output NV12. Nothing in the device tree
+needed changing — this is all inherited from `rk3328.dtsi` and was simply never
+exercised.
+
+**The `/dev/videoN` numbering is not stable across boots.** It swapped between
+two reboots during testing, and `/dev/video-dec2` / `-dec3` are plain symlinks
+to `videoN`, so they swap too. Match on the driver name from `v4l2-ctl --info`.
+
+Measured against software decode of the same clips, the case for the hardware is
+entirely in the CPU column: 4K HEVC at 92 fps and 2.6 ms of CPU per frame,
+versus 17 fps and 202 ms in software. At 1080p H.264 the wall-clock times are
+the same and only the CPU cost differs, so a benchmark that watches only fps
+will conclude the hardware does nothing.
+
 ## Working on the device tree
 
 **The vendor device tree is evidence, not truth.** Board values here come from
