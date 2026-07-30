@@ -195,7 +195,48 @@ wrongly:
   bare DTS through the same `dt/` mechanism this profile uses.
 
 If Armbian ever drops the Dusun board, both go with it, and the overlays lose
-the device tree they are written against.
+the device tree they are written against. The escape hatch for the U-Boot half
+is `${USERPATCHES_PATH}/u-boot/<patch_dir>/`, which
+`lib/functions/artifacts/artifact-uboot.sh:65` adds as a patch root alongside
+the framework's own — the defconfig is 90 lines and could be vendored here. It
+is deliberately *not* vendored today, because a second copy is a second thing to
+keep in sync and `check-upstream.sh` already fails loudly if the file goes away.
+
+### Why the base board is still Dusun
+
+Every rk3328 board in Armbian and in mainline was scored against what actually
+defines this machine, rather than against the SoC. Settled; do not redo it.
+
+Nothing came close. The best candidates — `rk3328-nanopi-r2s`,
+`rk3328-orangepi-r1-plus`, `rk3328-a1` — match on ethernet and nothing else:
+`gmac2io` with an external RGMII PHY, an `mdio` child, a driven reset, and in
+the NanoPi's case the same RTL8211E at address 1. But their PHY supply is a
+plain always-on regulator, which is precisely the bug that kept this board's
+ethernet dead, and none of them has the HYM8563, `uart1` as a real port, an IR
+receiver, a USB-attached WiFi power hog, or an enabled GPU. Dusun itself scores
+*below* them; it wins only on the GPU being switched on at all, and it has that
+wrong.
+
+That does not matter, because **the DTS ancestry is history, not coupling.**
+`rk3328-giada-dn73.dts` is standalone — it includes `rk3328.dtsi` and
+`rk3328-dram-default-timing.dtsi`, never the Dusun file. Re-deriving it would
+churn a hardware-verified file for no functional gain.
+
+The one live coupling is `BOOTCONFIG`, and it is **not** safely swappable. The
+two Armbian-supplied rk3328 defconfigs, `dusun-dsom-010r` and `z28pro`, are
+exactly the two that set `CONFIG_ROCKCHIP_EXTERNAL_TPL=y`: DRAM init comes from
+the rkbin blob. Every mainline rk3328 defconfig — `roc-cc`, `rock64`,
+`nanopi-r2s`, `orangepi-r1-plus` — builds U-Boot's own TPL instead. Switching
+would replace working DDR3 init on these Samsung parts with untested init, which
+is the one change that can leave a box that boots from eMMC unable to boot at
+all. The rest of the U-Boot pin (`BOOTBRANCH_BOARD`, `BOOTPATCHDIR`,
+`BOOT_SCENARIO`) is identical across all of them anyway, so there is nothing
+else to gain.
+
+Note that `z28pro-rk3328_defconfig` pairs `CONFIG_ROCKCHIP_EXTERNAL_TPL=y` with
+`CONFIG_DEFAULT_DEVICE_TREE="rockchip/rk3328-rock64"`. If a Dusun-free future
+ever forces the issue, that is the pattern to copy: a mainline device tree with
+the external TPL flipped back on.
 
 ### The bump procedure
 
@@ -335,6 +376,12 @@ and a keymap.
 1 075 000 µV at 200, 300 and 400 MHz. The dusun profile bounds the rail at
 1 100 000 µV, so all three fall outside the permitted range, `_opp_add` drops
 them, devfreq init fails and `lima` never binds:
+
+Worth knowing that upstream's `rk3328-dusun-dsom-010r.dts` carries
+`//regulator-min-microvolt = <712500>;` commented out on the line directly above
+the `1100000` that replaced it. Somebody raised the floor deliberately, so the
+value is a decision rather than a typo — and a `//` comment will fool any tool
+that greps device trees without stripping comments first.
 
 ```
 lima ff300000.gpu: Fatal error during devfreq init
