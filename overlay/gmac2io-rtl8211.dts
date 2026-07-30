@@ -37,8 +37,8 @@
 			 *   cat /proc/device-tree/serial-number
 			 *
 			 * Take the last five bytes and prefix 0x02 (locally
-			 * administered, unicast), e.g. serial 99d4385fbd15d55d
-			 * gives 02:5f:bd:15:d5:5d.
+			 * administered, unicast), so a serial ending in
+			 * aabbccddee becomes 02:aa:bb:cc:dd:ee.
 			 */
 			/* local-mac-address = [02 xx xx xx xx xx]; */
 			phy-supply = <&vcc_phy>;
