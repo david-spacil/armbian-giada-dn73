@@ -9,7 +9,7 @@ and leaves the machine without working ethernet or WiFi.
 > The port for Giada DN73 board was made solely via Claude Opus 5 from board
 > variant for dusun-dsom-010r and the original firmware supplied with the
 > set-top-box. The port was tested by a human tester to a limited extent —
-> see [What works](#what-works) for what was and was not verified.  
+> [TESTING.md](TESTING.md) records exactly what was and was not verified.  
 > Testers are welcome.
 
 ## Build an image
@@ -73,24 +73,16 @@ Compared with running the stock `dusun-dsom-010r` profile on this hardware:
 
 Verified on hardware, Armbian 26.08.0-trunk / Debian trixie / kernel 6.18.40
 `current`, installed to eMMC and running from it with no overlays applied:
+gigabit ethernet with a stable MAC, WiFi, Bluetooth, all four USB connectors,
+`/dev/ttyS1`, the RTC as `rtc0`, IR reception, HDMI console, microSD and eMMC —
+booting in 21.5 s with no failed units.
 
-| | |
-|---|---|
-| Gigabit ethernet | `end0`, 1 Gbps full duplex, stable MAC across reinstall |
-| WiFi | associates and scans — throughput not measured |
-| Bluetooth | `hci0`, RTL firmware loads — no device paired |
-| USB | all four connectors enumerate — no SuperSpeed device tested |
-| RTC | `rtc0`, keeps time — battery retention across power loss not tested |
-| IR receiver | `rc0` + `/dev/lirc0`, NEC frames decode from a real remote — no keymap shipped, so no key events |
-| Audio | three cards enumerate (line-out, S/PDIF, HDMI) — **no playback tested**; mic-in is not wired up in hardware |
-| microSD, eMMC, HDMI console | |
-| Boot | 21.5 s, no failed units |
-
-**Not tested at all:** the COM port carrying data, the mini-PCIe slot (it is USB,
-not PCIe — RK3328 has none), the watchdog, suspend/resume, thermal behaviour under
-sustained load, GPU and video decode, and the `edge` kernel branch. The
-`dn73-peripherals.dts` overlay has never been applied to a real install; its
-contents were verified only in the board device tree.
+Several of those were confirmed to initialise without the function itself being
+exercised, and a fair amount was never tested at all: the COM port carrying data,
+audio playback, the watchdog, the mini-PCIe slot, suspend/resume, thermals under
+load, GPU and video decode, the `edge` branch, and the `dn73-peripherals.dts`
+overlay. **[TESTING.md](TESTING.md) has the row-by-row status, with a command for
+each gap** — start there before trusting anything on this list.
 
 ## Notes
 
