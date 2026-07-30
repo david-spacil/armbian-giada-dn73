@@ -24,6 +24,38 @@ containers installed since — so its boot time is not comparable with the 21.5 
 above, and it is not quoted here. The GPU rows require the `vdd_logic` fix
 described below; anything built before that commit has no GPU at all.
 
+### Configuring WiFi costs about a minute of boot time
+
+Worth knowing before quoting the 21.5 s at anyone. Once a WiFi profile exists and
+autoconnects, boot goes to **1 min 20 s**, and `systemd-analyze blame` puts
+57.7 s of that on `NetworkManager-wait-online.service`.
+
+It is not a misconfiguration — the PSK is stored, `psk-flags` is 0 — it is the
+association flakiness in the WiFi row below, priced in seconds. Read
+`journalctl -b -u NetworkManager -o short-monotonic`:
+
+```
+48.2  supplicant interface state: authenticating -> disconnected
+51.7  supplicant interface state: authenticating -> disconnected
+73.0  Activation: (wifi) association took too long, failing activation
+73.0  state change: config -> failed (reason 'ssid-not-found')
+73.0  manager: startup complete          <- wait-online is released here
+73.5  Activation: starting connection 'Spacilovi'   <- the retry
+75.0  supplicant interface state: associating -> associated
+```
+
+Two failed authentications, then NetworkManager gives up on the *first* attempt
+at 73 s, which is what finally releases `network-online.target` — and the retry
+that follows immediately succeeds. So the box does get WiFi, roughly a minute
+after it could have finished booting.
+
+The cheap mitigation, if boot time matters more than WiFi being up early, is to
+stop the profile autoconnecting (`nmcli connection modify <name>
+connection.autoconnect no`) or to cap the wait
+(`systemctl edit NetworkManager-wait-online.service`, `ExecStart=` then
+`ExecStart=/usr/bin/nm-online -s -q --timeout=15`). Neither is applied on the
+reference unit, and neither fixes the association itself.
+
 Status meanings:
 
 | | |

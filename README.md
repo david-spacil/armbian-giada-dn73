@@ -108,6 +108,10 @@ gap** — start there before trusting anything on this list.
   module_armbian_firmware hold`. Update by rebuilding from here instead.
 - Interfaces are `end0` and `wlx<mac>`, not `eth0` and `wlan0`. Scripts carried
   over from a dusun-based install will name the wrong one.
+- Configuring WiFi costs about a minute of boot time. The first association
+  attempt fails, `NetworkManager-wait-online` waits out the whole 57.7 s before
+  the retry succeeds, and boot goes from 21.5 s to 1 min 20 s. See
+  [TESTING.md](TESTING.md) for the mitigation.
 - Hardware video decode needs GStreamer. Debian's `ffmpeg` cannot drive these
   decoders — they are stateless V4L2 request-API devices and it has no
   `v4l2request` hwaccel. `gstreamer1.0-plugins-bad` provides `v4l2slh264dec` and
