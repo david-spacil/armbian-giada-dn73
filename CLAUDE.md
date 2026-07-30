@@ -14,9 +14,37 @@ compiles, and even one that boots, says nothing about whether it describes *this
 board — `docs/diagnosing-a-mismatched-board.md` is the writeup of exactly that
 trap. Verification means booting the hardware and checking each peripheral.
 
-`README.md` is the user-facing document and stays that way: what the board is,
-how to build an image, what to expect. The reasoning, the measurements and the
-dead ends live here and in `docs/`.
+`README.md` is the user-facing document and is deliberately kept to the minimum,
+in the style of `armbian/build`'s own: how to build, how to patch a running
+install, what changes versus the stock profile, and what was and was not verified.
+The reasoning, the measurements and the dead ends live here and in `docs/`. Resist
+letting depth flow back into the README.
+
+## The board
+
+Not a system-on-module design: the SoC, DDR3, eMMC, the ethernet PHY and the
+WiFi/BT combo are all soldered onto one Giada-designed PCB.
+
+| Designator | Part | Notes |
+|---|---|---|
+| U800 | Rockchip RK3328 | quad Cortex-A53 |
+| U46 | **Realtek RTL8211E** | gigabit ethernet PHY, 48-pin QFN |
+| Y3 | 25.000 MHz crystal | PHY reference clock |
+| — | AE-SC24002 | 100/1000 Base-T LAN transformer, 4 pairs |
+| U8 | Genesys GL850G | USB 2.0 hub |
+| — | Realtek RTL8821CU | WiFi 802.11ac + Bluetooth, **USB** attached |
+| — | Rockchip RK805-1 | PMIC |
+| — | Haoyu **HYM8563** | battery-backed RTC, i2c1 @ 0x51, CR2032 on `BAT CON` |
+| U31 | Sipex **SP213EEA** | RS232 transceiver for the DB9 |
+| — | *(unmarked)* | IR receiver on GPIO2_A2 |
+| U1800/U1801 | Samsung DDR3 | |
+
+The four USB connectors are one USB 3.2 Gen1 on the xHCI, one USB 2.0 OTG on the
+dwc2 (wired `dr_mode = "host"`), and two USB 2.0 behind the GL850G hub. The hub's
+fourth downstream port goes to the full-size mini-PCIe slot.
+
+Board photos are in `foto_desky/`. The RK3328 model is the **DN73**; Giada's DN72
+is an RK3288 machine and its datasheet does not describe this board.
 
 ## Commands
 
@@ -60,6 +88,14 @@ overlay/*.dts                                      same fixes, for existing inst
 scripts/                                           two diagnostic tools
 docs/diagnosing-a-mismatched-board.md              method, and the dead ends
 ```
+
+The two scripts generalise to any Rockchip board whose vendor firmware is
+available. `extract-dtb.py` pulls device tree blobs out of a Rockchip `update.img`
+by scanning for the FDT magic — this is how the board's GPIO assignments were
+recovered. `mdio-raw-scan.py` reads MDIO straight from the DWMAC1000 registers via
+`/dev/mem`, bypassing phylib, and distinguishes "bus floating high" from "held low"
+from a real PHY answering; it is what proved the PHY was alive while the driver
+still reported `no phy found`.
 
 **Every hardware fix exists in two places.** The full board DTS is what a new
 image gets; the two overlays exist so a machine already running a
@@ -132,6 +168,18 @@ tree that is `gmac2phy`, so `gmac2io` got nothing and the kernel invented a rand
 address on every boot — a different DHCP lease each time. Setting
 `ethernet0 = &gmac2io` fixes both that and the interface name (`end0`, because
 udev then sees it as onboard device 0). Verified stable across a reinstall.
+
+WiFi gets no such treatment: the RTL8821CU is a USB device with no DT node, so
+udev has no onboard index and names it `wlx<mac>`. That one is not fixable from
+the device tree, only with a `systemd.link` file.
+
+Unrelated to the board but it bites every image built here:
+`systemd-networkd-wait-online` waits for `systemd-networkd`, which manages nothing
+because netplan's global renderer in `armbian.yaml` is NetworkManager (merged
+after `10-dhcp-all-interfaces.yaml`, so it wins). It alone added two minutes to
+every boot, and `network-online.target` waits for it.
+`userpatches/customize-image.sh` masks the unit; `NetworkManager-wait-online`
+covers the target correctly.
 
 ### WiFi: a vendor binding that does not exist in mainline
 
