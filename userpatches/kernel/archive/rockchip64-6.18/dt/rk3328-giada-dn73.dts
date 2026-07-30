@@ -436,11 +436,34 @@
 		vcc6-supply = <&vcc_sys>;
 
 		regulators {
+			/*
+			 * The lower bound has to reach 1075000. This rail is
+			 * the GPU's mali-supply, and opp-table-gpu in
+			 * rk3328.dtsi asks for 1075000 uV at 200, 300 and
+			 * 400 MHz. The dusun value of 1100000 put all three
+			 * out of range, so _opp_add dropped them, devfreq
+			 * init failed and lima never bound at all:
+			 *
+			 *   lima ff300000.gpu: Fatal error during devfreq init
+			 *   lima ff300000.gpu: probe with driver lima failed with error -34
+			 *
+			 * The board came up with only /dev/dri/card0 from
+			 * rockchip-drm and no render node - no acceleration
+			 * whatsoever on a machine sold as a signage player,
+			 * and nothing in the log that names a regulator as
+			 * the cause. 712500 is the RK805 DCDC1 minimum and
+			 * what upstream rk3328 boards (rock64, roc-cc) use.
+			 *
+			 * Measured after the change: lima binds, renderD128
+			 * appears, GL_RENDERER is Mali450, an offscreen GLES2
+			 * benchmark runs, and devfreq does take the rail down
+			 * to 1075000 at the 200 MHz idle OPP.
+			 */
 			vdd_logic: DCDC_REG1 {
 				regulator-name = "vdd_log";
 				regulator-always-on;
 				regulator-boot-on;
-				regulator-min-microvolt = <1100000>;
+				regulator-min-microvolt = <712500>;
 				regulator-max-microvolt = <1450000>;
 				regulator-ramp-delay = <12500>;
 

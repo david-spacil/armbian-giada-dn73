@@ -66,6 +66,7 @@ Compared with running the stock `dusun-dsom-010r` profile on this hardware:
 | RS232 (DB9) | pins claimed by USB VBUS regulators, port does not exist | `/dev/ttyS1` |
 | RTC | falls back to the RK805, no battery backup | HYM8563 as `rtc0` |
 | IR receiver | not described | `gpio-ir-receiver`, `rc0` + `/dev/lirc0` |
+| GPU | `vdd_logic` floor of 1.1 V puts the Mali OPPs out of range, `lima` fails to probe, no render node | 712.5 mV floor, `lima` binds, `renderD128`, Mali-450 on GLES 2.0 |
 | Reported model | Dusun DSOM 010R | Giada DN73 |
 | Boot time | ~2 min, waiting on `systemd-networkd-wait-online` | ~22 s |
 

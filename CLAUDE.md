@@ -238,6 +238,45 @@ No keymap is set, since the machine ships without a remote, and the active
 protocol is therefore `[lirc]` (raw). Getting key events needs `ir-keytable -p nec`
 and a keymap.
 
+### The GPU, and a regulator floor that silently disabled it
+
+`vdd_logic` is `mali-supply`. `opp-table-gpu` in `rk3328.dtsi` asks for
+1 075 000 µV at 200, 300 and 400 MHz. The dusun profile bounds the rail at
+1 100 000 µV, so all three fall outside the permitted range, `_opp_add` drops
+them, devfreq init fails and `lima` never binds:
+
+```
+lima ff300000.gpu: Fatal error during devfreq init
+lima ff300000.gpu: probe with driver lima failed with error -34
+```
+
+The floor is now 712 500, the RK805 DCDC1 minimum and what upstream RK3328
+boards with the same PMIC use.
+
+This is the same shape of failure as the USB VBUS pins that took away the serial
+port: **the damage lands on a peripheral unrelated to the node that carries the
+wrong value.** Nobody debugging a missing GPU starts by reading regulator
+constraints, and the log names no regulator — the only clue is the bare
+`-34` (`ERANGE`) from a driver that has no obvious connection to the PMIC.
+
+What makes it worse than the VBUS case is that `/dev/dri/card0` exists either
+way. That node is `rockchip-drm`, the display controller, and it probes fine
+regardless. The test "is there a DRM device" answers yes on a machine with no
+GPU. The thing to check is **the render node**, `/dev/dri/renderD128`.
+
+Verified after the change: `lima` binds, `GL_RENDERER` is `Mali450` on Mesa
+25.0.7 with OpenGL ES 2.0, an offscreen GBM/EGL benchmark renders 672 fps at
+512×512 with correct pixel readback, and devfreq steps 200 → 400 MHz under load.
+
+`vdd_logic` is also `vcodec-supply` for `&vpu`, so lowering its floor was
+validated under combined CPU, GPU and VPU load rather than at idle — ten minutes
+of four-thread `stress-ng` plus a 4K HEVC decode loop plus a GLES2 render loop,
+peaking at 75.8 °C with no throttling and no errors. The rail does sit at
+1.075 V for that whole time, since every available GPU OPP asks for it.
+
+The 500 MHz OPP is still dropped, for an unrelated reason: `lima` reports the
+clock parent at 491.52 MHz, below what that OPP asks for.
+
 ## Working on the device tree
 
 **The vendor device tree is evidence, not truth.** Board values here come from

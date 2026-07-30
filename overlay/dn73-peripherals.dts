@@ -101,6 +101,26 @@
 	};
 
 	/*
+	 * vdd_log is the GPU's mali-supply, and opp-table-gpu in rk3328.dtsi
+	 * asks for 1075000 uV at 200, 300 and 400 MHz. The dusun profile
+	 * bounds this rail at 1100000, which puts all three OPPs out of range;
+	 * _opp_add drops them, devfreq init fails and lima never binds:
+	 *
+	 *   lima ff300000.gpu: probe with driver lima failed with error -34
+	 *
+	 * The result is /dev/dri/card0 from rockchip-drm and no render node -
+	 * no GPU acceleration at all. 712500 is the RK805 DCDC1 minimum and
+	 * what upstream rk3328 boards use.
+	 */
+	fragment@8 {
+		target = <&vdd_logic>;
+
+		__overlay__ {
+			regulator-min-microvolt = <712500>;
+		};
+	};
+
+	/*
 	 * Battery-backed RTC next to the PMIC. No interrupt is described: the
 	 * vendor points irq_gpio at GPIO2_C4, but with the alarm flag latched
 	 * in the chip no GPIO bank's EXT_PORT register changes, so the INT
