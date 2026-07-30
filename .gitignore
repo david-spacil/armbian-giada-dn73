@@ -1,2 +1,5 @@
 .~lock.*#
 output/
+
+# Working plan, local only - transient and superseded by the docs it feeds.
+docs/next-steps.md
