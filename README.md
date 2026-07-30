@@ -8,6 +8,13 @@ working ethernet or WiFi.
 With this profile everything works out of the box: gigabit ethernet, WiFi,
 Bluetooth, the RS232 port, the RTC, the IR receiver, HDMI console.
 
+> **Full disclosure**  
+> The port for Giada DN73 board was made solely via Claude Opus 5 from board
+> variant for dusun-dsom-010r and the original firmware supplied with the
+> set-top-box. The port was tested by a human tester to a limited extent.
+> What **was not** tested at all: COM port, PCIe slot.  
+> Testers are welcome.
+
 ## The hardware
 
 The DN73 is not a system-on-module design. The RK3328, DDR3, eMMC, the ethernet
