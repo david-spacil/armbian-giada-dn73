@@ -53,14 +53,37 @@ subcommand is `build`, never `docker`):
 
 ```sh
 git clone --depth 1 https://github.com/armbian/build.git
+mkdir -p build/userpatches
 cp -r userpatches/* build/userpatches/
 cd build
-./compile.sh build BOARD=giada-dn73 BRANCH=current RELEASE=trixie \
-    BUILD_DESKTOP=no BUILD_MINIMAL=no KERNEL_CONFIGURE=no
+./compile.sh build giada-dn73
 ```
 
+The bare argument resolves `userpatches/config-giada-dn73.conf`, which carries
+the board, branch, release and `BSPFREEZE=yes`. Command-line switches still win,
+so `./compile.sh build giada-dn73 BRANCH=edge` works.
+
+`mkdir -p` is not decoration: a fresh clone has no `userpatches/` directory at
+all, and `cp -r src/* build/userpatches/` fails outright without it.
+
 Add `KERNEL_BTF=no` on hosts with less than ~6.5 GB RAM, or the BTF link step
-runs out of memory. A full build with BTF takes ~36 min on 20 cores.
+runs out of memory — Armbian reports what it has as
+`Considering available RAM for BTF build [ <avail>/<needed> MiB ]`. A full build
+with BTF takes ~42 min on 20 cores.
+
+**The build host needs a registered arm64 binfmt handler.** Armbian's Docker
+container cannot install one for you: every `update-binfmts --enable` it runs
+fails with exit 2, and the build then dies on
+
+```
+INFO: checking [ arch-test for 'arm64' ]
+arm64: not supported on this machine/kernel
+```
+
+which names neither qemu nor binfmt and points nowhere near this profile. On
+Fedora the fix is `sudo dnf install -y qemu-user-static-aarch64`; check it took
+with `ls /proc/sys/fs/binfmt_misc/` (expect `qemu-aarch64`, `flags: F`) and
+force it with `systemctl restart systemd-binfmt` if not.
 
 Compiling the overlays (needs `dtc` from the `dtc` / `device-tree-compiler`
 package; it is not installed on every dev host, but Armbian images ship it):
@@ -258,12 +281,29 @@ Two mechanisms, both Armbian's own, and both needed:
   built package installed into the image, from inside the chroot. It works off
   the build's own list, so it cannot miss one the way a hand-written list would.
 - **A machine already running**: `armbian-config --api module_armbian_firmware
-  hold`, with `... hold status` to check. It covers `linux-image-current-rockchip64`
-  and `linux-dtb-current-rockchip64` — precisely the two packages whose names are
-  generic but whose contents are ours. `linux-u-boot-giada-dn73-current` and
-  `armbian-bsp-cli-giada-dn73-current` need no hold, since no such package exists
-  upstream to overwrite them, and `armbian-firmware`, `armbian-config` and the
-  rest are board-agnostic and should keep updating.
+  hold`, with `... hold status` to check.
+
+**The two are not equivalent, and the difference is deliberate on Armbian's part.**
+Measured on a real build, `BSPFREEZE` holds eight packages:
+
+```
+base-files  linux-image-current-rockchip64  linux-dtb-current-rockchip64
+armbian-firmware  armbian-zsh  armbian-plymouth-theme
+armbian-bsp-cli-giada-dn73-current  linux-u-boot-giada-dn73-current
+```
+
+The runtime hold covers two, `linux-image-current-rockchip64` and
+`linux-dtb-current-rockchip64` — precisely the pair whose names are generic but
+whose contents are ours, which is the minimum that keeps the board bootable.
+`BSPFREEZE` additionally pins the board-agnostic Armbian layer, so an image built
+this way stops receiving `armbian-firmware` and friends from `apt.armbian.com`
+too. That is consistent with the update path below rather than a side effect, but
+it does mean the whole Armbian layer moves only when you rebuild. Debian's own
+packages are untouched either way, so security updates keep flowing.
+
+The two board-named packages, `linux-u-boot-giada-dn73-current` and
+`armbian-bsp-cli-giada-dn73-current`, are belt-and-braces: no package of that
+name exists upstream to overwrite them.
 
 `unattended-upgrade` skips `SELSTATE_HOLD` packages outright (`/usr/bin/unattended-upgrade`,
 lines 431 and 1261), so the hold is enough. Note that `apt-mark hold` does not

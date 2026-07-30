@@ -19,14 +19,21 @@ The profile lives in `userpatches/`, so no fork of `armbian/build` is needed.
 ```sh
 git clone --depth 1 https://github.com/armbian/build.git
 git clone --depth 1 https://github.com/david-spacil/armbian-giada-dn73.git
+mkdir -p build/userpatches
 cp -r armbian-giada-dn73/userpatches/* build/userpatches/
 cd build
-./compile.sh build BOARD=giada-dn73 BRANCH=current RELEASE=trixie \
-    BUILD_DESKTOP=no BUILD_MINIMAL=no KERNEL_CONFIGURE=no
+./compile.sh build giada-dn73
 ```
 
+The board, branch, release and the package freeze come from
+`userpatches/config-giada-dn73.conf`; anything on the command line still
+overrides it.
+
 Add `KERNEL_BTF=no` on build hosts with less than ~6.5 GB of RAM, or the kernel
-BTF link step runs out of memory.
+BTF link step runs out of memory. The host also needs an arm64 binfmt handler —
+without it the build stops at `arm64: not supported on this machine/kernel`.
+Debian and Ubuntu hosts get one from `qemu-user-static`, Fedora from
+`qemu-user-static-aarch64`.
 
 Write the image to a microSD card, boot from it, then run `armbian-install` and
 choose **boot from eMMC**. Remove the card afterwards — the boot ROM prefers the
