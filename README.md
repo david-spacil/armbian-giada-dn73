@@ -93,6 +93,12 @@ gap** — start there before trusting anything on this list.
 
 ## Notes
 
+- **Do not `apt upgrade` the kernel from `apt.armbian.com`.** Armbian's
+  `linux-dtb-current-rockchip64` contains 255 device trees and not this one, so
+  installing it removes the DTB U-Boot boots from. Images built from this
+  repository hold the kernel packages automatically (`BSPFREEZE=yes`); on a
+  machine installed before that, run `armbian-config --api
+  module_armbian_firmware hold`. Update by rebuilding from here instead.
 - Interfaces are `end0` and `wlx<mac>`, not `eth0` and `wlan0`. Scripts carried
   over from a dusun-based install will name the wrong one.
 - Hardware video decode needs GStreamer. Debian's `ffmpeg` cannot drive these

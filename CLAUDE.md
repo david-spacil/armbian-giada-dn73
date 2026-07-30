@@ -238,6 +238,42 @@ Note that `z28pro-rk3328_defconfig` pairs `CONFIG_ROCKCHIP_EXTERNAL_TPL=y` with
 ever forces the issue, that is the pattern to copy: a mainline device tree with
 the external TPL flipped back on.
 
+### Updates are the thing that breaks this board
+
+Not a device tree problem, but the one that ends with a box that does not come
+back. Armbian's `linux-dtb-current-rockchip64` ships 255 device trees and none of
+them is this board — the Giada DTB exists only in the locally built package of
+the same name. `unattended-upgrades` is enabled by default and Armbian's own
+`/etc/apt/apt.conf.d/02-armbian-periodic` allows `origin=Armbian`, so the first
+time `apt.armbian.com` publishes a version above the locally built one, the DTB
+is replaced by a package without it, U-Boot stops resolving
+`fdtfile=rockchip/rk3328-giada-dn73.dtb`, and the board fails to boot with
+nobody watching. Locally built `26.08.0-trunk` currently outranks the repository's
+`26.5.1`, which is the only reason this has not happened yet.
+
+Two mechanisms, both Armbian's own, and both needed:
+
+- **New images**: `BSPFREEZE=yes` in `userpatches/config-giada-dn73.conf`.
+  `lib/functions/rootfs/distro-agnostic.sh:423` `apt-mark hold`s every locally
+  built package installed into the image, from inside the chroot. It works off
+  the build's own list, so it cannot miss one the way a hand-written list would.
+- **A machine already running**: `armbian-config --api module_armbian_firmware
+  hold`, with `... hold status` to check. It covers `linux-image-current-rockchip64`
+  and `linux-dtb-current-rockchip64` — precisely the two packages whose names are
+  generic but whose contents are ours. `linux-u-boot-giada-dn73-current` and
+  `armbian-bsp-cli-giada-dn73-current` need no hold, since no such package exists
+  upstream to overwrite them, and `armbian-firmware`, `armbian-config` and the
+  rest are board-agnostic and should keep updating.
+
+`unattended-upgrade` skips `SELSTATE_HOLD` packages outright (`/usr/bin/unattended-upgrade`,
+lines 431 and 1261), so the hold is enough. Note that `apt-mark hold` does not
+stop an **explicit** `apt install pkg=version` — verified, apt will happily
+downgrade past the hold when asked by name. That is fine for this threat model
+and worth knowing before doing it by hand.
+
+So the update path for this board is: rebuild from this repository and install
+the packages it produces. Not `apt upgrade` from `apt.armbian.com`.
+
 ### The bump procedure
 
 `scripts/check-upstream.sh` reports all of this without building anything, and
