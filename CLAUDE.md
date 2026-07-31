@@ -94,9 +94,30 @@ dtc -@ -I dts -O dtb -o gmac2io-rtl8211.dtbo overlay/gmac2io-rtl8211.dts
 
 **The board DTS cannot be compiled standalone.** It `#include`s `rk3328.dtsi`,
 `rk3328-dram-default-timing.dtsi` and `dt-bindings/` headers, so it only builds
-inside a kernel tree — in practice, by running the image build. The overlays have
-no includes and do compile on their own, which makes them the faster iteration
-path.
+inside a kernel tree. The overlays have no includes and do compile on their own,
+which makes them the faster iteration path.
+
+`scripts/compile-dts.sh` builds that tree instead of a whole image — a shallow
+sparse clone of `torvalds/linux` at `v<version>` (arm64 device trees and the
+bindings headers, ~60 MiB), the device-tree half of `armbian/build`'s
+`rockchip64-<version>` patches applied on top, then `cpp` and `dtc`. Roughly a
+minute against a build's 42, for both `current` and `edge`:
+
+```sh
+scripts/compile-dts.sh                 # both copies
+scripts/compile-dts.sh --work ~/.cache/giada-dts   # keep the trees, seconds on re-run
+```
+
+Mainline alone is not enough, and the two reasons are worth knowing before
+trying to shortcut it: `rk3328-dram-default-timing.dtsi` **does not exist
+upstream at all** — Armbian's `rk3328-add-dmc-driver.patch` creates it — and the
+board DTS references `spdif_out` and `spdif_sound`, which another patch in the
+same directory adds to `rk3328.dtsi`.
+
+What it proves is syntax, and that every `&label` resolves. It cannot prove the
+image is right; only booting the hardware does that. Use `--work` for iteration,
+but never cache that directory in CI: the trees are patched once and then
+trusted, so a stale one would test last week's upstream.
 
 Do not pipe `dtc` through `head`: `head` closes the pipe, SIGPIPE kills `dtc`
 before it writes the output file, and you get a silent no-op.
@@ -111,7 +132,9 @@ userpatches/customize-image.sh                     runs in the image chroot
 overlay/*.dts                                      same fixes, for existing installs
 scripts/extract-dtb.py, mdio-raw-scan.py           diagnostic tools
 scripts/check-upstream.sh                          reports drift from armbian/build
-.github/workflows/upstream-drift.yml               runs it weekly, files an issue
+scripts/compile-dts.sh                             compiles the board DTS, no image build
+scripts/check-overlay-parity.sh                    board DTS vs overlays, no network
+.github/workflows/upstream-drift.yml               runs all three weekly, files an issue
 docs/diagnosing-a-mismatched-board.md              method, and the dead ends
 ```
 
@@ -127,10 +150,20 @@ still reported `no phy found`.
 image gets; the two overlays exist so a machine already running a
 `dusun-dsom-010r` image can pick the fixes up without being reinstalled
 (`gmac2io-rtl8211.dts` for ethernet and WiFi, `dn73-peripherals.dts` for serial,
-RTC and IR). A change to one is incomplete until it is in the other. Nothing
-enforces this.
+RTC and IR). A change to one is incomplete until it is in the other.
 
-Two differences between the forms are deliberate, not oversights:
+`scripts/check-overlay-parity.sh` is what enforces it. Diffing the two is
+useless — they are written in different dialects — so it normalises both into
+one (strips comments, expands `RK_PA2` to `2`, `GPIO_ACTIVE_LOW` to `1`,
+rewrites `fragment@N { target = <&x>; __overlay__ {` into `&x {`, flattens
+whitespace) and then greps for each fix as a single string. **Adding a hardware
+fix means adding a line to its `BOTH` list**, otherwise the new fix is the one
+thing not covered. It is not a device tree parser: it proves a value is present,
+not that it sits in the right node.
+
+Three differences between the forms are deliberate, not oversights. The script
+carries all three as `DTS_ONLY` / `OVERLAY_ONLY` entries with their reason, so
+they stay recorded as decisions:
 
 - The board DTS uses `RK_PA2`-style macros; the overlays use raw pin numbers
   (`<0 2 0 ...>`) because plugin sources here include no bindings headers.
@@ -138,6 +171,16 @@ Two differences between the forms are deliberate, not oversights:
   the RK805 has already taken `rtc0` by the time it probes. Overlays cannot
   usefully reorder aliases at all, which is also why the overlay path leaves the
   ethernet MAC problem below unfixed.
+- The overlays disable `sdio_pwrseq` and the board DTS does not. That label
+  exists only in the dusun DTS; nothing here defines it, so there is nothing to
+  switch off.
+
+The overlays are also deliberately *not* shipped through
+`userpatches/kernel/archive/*/overlay/`. That mechanism is for overlays that
+travel with an image this profile builds — but an image built here already has
+the fixes compiled in. The overlays exist for the opposite case, a foreign
+`dusun-dsom-010r` install, which is reached through Armbian's user path,
+`/boot/overlay-user/` plus `user_overlays=` in `armbianEnv.txt`.
 
 ### The `userpatches` path is exact
 
@@ -317,8 +360,11 @@ the packages it produces. Not `apt upgrade` from `apt.armbian.com`.
 ### The bump procedure
 
 `scripts/check-upstream.sh` reports all of this without building anything, and
-`.github/workflows/upstream-drift.yml` runs it weekly and files an issue. When
-it says the kernel version moved:
+`.github/workflows/upstream-drift.yml` runs it, `compile-dts.sh` and
+`check-overlay-parity.sh` weekly, filing an issue when any of them speaks up.
+The compile is a drift check as much as a local one: on a scheduled run nothing
+here has changed, so a failure means `rk3328.dtsi` or an Armbian patch moved
+under us. When the kernel version moved:
 
 1. `git mv userpatches/kernel/archive/rockchip64-<old>/ .../rockchip64-<new>/`,
    for whichever of `current` and `edge` moved. Keep the copies identical.
@@ -326,7 +372,9 @@ it says the kernel version moved:
    overrides — `opp-table-0` (the DTS deletes it), `opp-table-gpu` (its 1075000
    µV is why `vdd_logic` needs a 712500 floor), `gmac2io`, `i2s1`, `codec`,
    `tsadc`. The checker watches the first two; the rest need eyes.
-3. Re-run `scripts/check-upstream.sh` — it should come back clean.
+3. Re-run `scripts/check-upstream.sh` and `scripts/compile-dts.sh` — both should
+   come back clean. The compile is what catches the new `rk3328.dtsi` having
+   dropped a label the DTS references, which step 2 can easily read past.
 4. Build, install, and run the smoke test in `TESTING.md`. The
    `customize-image.sh` assertion catches a wrong device tree, but only booting
    the board catches a wrong *value* in the right device tree.
@@ -490,6 +538,11 @@ peaking at 75.8 °C with no throttling and no errors. The rail does sit at
 
 The 500 MHz OPP is still dropped, for an unrelated reason: `lima` reports the
 clock parent at 491.52 MHz, below what that OPP asks for.
+
+Upstream's `dusun-dsom-010r` has the same bug, so every image Armbian builds for
+that board has no GPU either. Reporting it is deliberately not done — nothing
+from here goes upstream — but it is the reason to expect no fix to arrive on its
+own.
 
 ### Video decode: two blocks, and a userspace that has to be GStreamer
 
