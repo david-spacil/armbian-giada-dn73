@@ -72,6 +72,31 @@ connection.autoconnect no`) or to cap the wait
 `ExecStart=/usr/bin/nm-online -s -q --timeout=15`). Neither is applied on the
 reference unit, and neither fixes the association itself.
 
+### The one thing worth trying against the association flakiness
+
+Untried, and written down so it is not forgotten. `armbian-firmware` ships
+`/lib/firmware/rtw88/rtw8821c_fw.bin` — the blob the driver reports as
+`Firmware version 24.11.0, H2C version 12`, and the prime suspect in the WiFi
+association row below. A newer one is the cheapest possible fix.
+
+It cannot be tried today: `BSPFREEZE` holds that package, and the Armbian
+repository's newest is `26.5.1` against the locally built `26.08.0-trunk`, so
+there is nothing higher to install. When there is:
+
+```sh
+apt-mark unhold armbian-firmware
+apt install --only-upgrade armbian-firmware
+dmesg | grep -i "rtw88.*version"        # confirm the blob actually moved
+# then 10 association attempts, comparing against the row below
+apt-mark hold armbian-firmware          # re-hold either way
+```
+
+Re-hold whatever the outcome. Leaving it loose lets the running system drift
+from what this repository can rebuild, which is the whole premise of the freeze.
+And never unhold `linux-dtb-current-rockchip64`: stock Armbian's copy contains
+255 device trees and not this board, so installing it leaves U-Boot with no
+`fdtfile` to load.
+
 Status meanings:
 
 | | |
