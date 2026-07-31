@@ -1,4 +1,4 @@
-name: Upstream drift
+name: Checks
 
 # This profile lives outside armbian/build and is pinned to it in several
 # places - most dangerously the userpatches/kernel/archive/rockchip64-<version>/
@@ -6,6 +6,12 @@ name: Upstream drift
 # scripts/check-upstream.sh compares the pins against upstream; this runs it
 # weekly and files an issue when something moves, so the drift is noticed
 # before somebody builds an image rather than after.
+#
+# It also runs the two checks that need no hardware: that every hardware fix is
+# in both the board DTS and the overlays, and that the board DTS still compiles.
+# The second one is an upstream check as much as a local one - on a scheduled
+# run our files have not changed, so a compile failure means rk3328.dtsi or an
+# Armbian patch moved out from under us, and it files an issue like any drift.
 
 on:
   schedule:
@@ -16,7 +22,7 @@ on:
     paths:
       - 'userpatches/**'
       - 'overlay/**'
-      - 'scripts/check-upstream.sh'
+      - 'scripts/**'
       - '.github/workflows/upstream-drift.yml'
   pull_request:
 
@@ -39,6 +45,21 @@ jobs:
             dtc -@ -I dts -O dtb -o "/tmp/$(basename "$o" .dts).dtbo" "$o"
           done
 
+      # Fast, needs no network, and is the mistake this repository is shaped to
+      # make: fixing the board DTS and forgetting the overlay, or the reverse.
+      - name: Check DTS / overlay parity
+        run: ./scripts/check-overlay-parity.sh
+
+      # No cache: prepare_tree applies the Armbian patches once and then trusts
+      # the tree, so a cached one would quietly test last week's upstream - the
+      # exact thing this workflow exists to notice.
+      - name: Compile the board DTS
+        id: dts
+        run: |
+          set +e
+          ./scripts/compile-dts.sh 2>&1 | tee /tmp/dts.txt
+          echo "status=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
       - name: Check against upstream
         id: check
         run: |
@@ -47,27 +68,32 @@ jobs:
           echo "status=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
 
       - name: Summarise
+        if: always()
         run: |
-          {
-            echo '## check-upstream.sh'
-            echo
-            echo '```'
-            sed 's/\x1b\[[0-9;]*m//g' /tmp/drift.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          for f in /tmp/dts.txt /tmp/drift.txt; do
+            [ -f "$f" ] || continue
+            {
+              echo "## $(basename "$f" .txt)"
+              echo
+              echo '```'
+              sed 's/\x1b\[[0-9;]*m//g' "$f"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          done
 
       # Only scheduled and manual runs file issues. On a push the job status is
       # the signal and an issue would just be noise.
       - name: File or update an issue
         if: >
-          steps.check.outputs.status != '0' &&
+          (steps.check.outputs.status != '0' || steps.dts.outputs.status != '0') &&
           (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          body=$(printf '%s\n\n```\n%s\n```\n' \
-            "\`check-upstream.sh\` exited ${{ steps.check.outputs.status }} on $(date -u +%Y-%m-%d)." \
-            "$(sed 's/\x1b\[[0-9;]*m//g' /tmp/drift.txt)")
+          body=$(printf '%s\n\n```\n%s\n```\n\n```\n%s\n```\n' \
+            "\`compile-dts.sh\` exited ${{ steps.dts.outputs.status }} and \`check-upstream.sh\` exited ${{ steps.check.outputs.status }} on $(date -u +%Y-%m-%d)." \
+            "$(sed 's/\x1b\[[0-9;]*m//g' /tmp/dts.txt 2>/dev/null)" \
+            "$(sed 's/\x1b\[[0-9;]*m//g' /tmp/drift.txt 2>/dev/null)")
 
           existing=$(gh issue list --label upstream-drift --state open \
                        --json number --jq '.[0].number')
@@ -85,11 +111,11 @@ jobs:
       # job goes red. Exit 2 means upstream moved and somebody has to decide -
       # worth seeing, not worth blocking on.
       - name: Fail on a broken pin
-        if: steps.check.outputs.status == '1'
+        if: steps.check.outputs.status == '1' || steps.dts.outputs.status == '1'
         run: |
-          echo "::error::check-upstream.sh reports a broken pin - see the job summary"
+          echo "::error::a build would now produce a wrong or failing image - see the job summary"
           exit 1
 
       - name: Note that upstream moved
-        if: steps.check.outputs.status == '2'
+        if: steps.check.outputs.status == '2' || steps.dts.outputs.status == '2'
         run: echo "::warning::upstream moved; nothing is broken but the differences want a decision"
