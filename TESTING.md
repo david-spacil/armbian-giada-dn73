@@ -12,11 +12,27 @@ Everything below was checked on a single DN73, on an image built by this profile
 |---|---|
 | Armbian | 26.08.0-trunk |
 | Release | Debian 13 trixie, CLI (no desktop) |
-| Kernel | 6.18.40-current-rockchip64, `BRANCH=current`, full BTF |
+| Kernel | 6.18.41-current-rockchip64, `BRANCH=current`, full BTF |
 | U-Boot | `2026.04_armbian`, this profile's own build |
 | Installed on | eMMC (`/dev/mmcblk2p1`), microSD removed |
 | Overlays | none applied |
-| Boot | 21.5 s (4.9 s kernel + 16.6 s userspace), zero failed units |
+| Boot | 21.4 s (4.9 s kernel + 16.5 s userspace), zero failed units |
+
+Re-verified on a second clean install from an image built with
+`./compile.sh build giada-dn73`, on the same unit: model `Giada DN73`, rootfs on
+`mmcblk2p1`, this profile's U-Boot in charge, `end0` at 1000 Mb/s, `rtc0` =
+`rtc-hym8563`, `/dev/ttyS1`, `rc0`, `rtw88_8821cu` loaded, `lima 1.1.0` bound
+with `renderD128` present, four V4L2 decoder nodes, zero failed units. The two
+boot figures above — 6.18.40 at 21.5 s and 6.18.41 at 21.4 s — are separate
+installs a kernel patch release apart.
+
+`BSPFREEZE=yes` was confirmed on that install: `apt-mark showhold` lists eight
+packages with no manual intervention. This is the check worth repeating after
+every reinstall, because an empty list means the board will eventually be
+updated into an unbootable state — see CLAUDE.md.
+
+The stable MAC survived the reinstall, evidenced independently by the DHCP server
+handing back the same lease.
 
 A second round of testing added the GPU, video decode, throughput and thermal
 rows. That round ran on the same unit and the same image, with Docker and a few
