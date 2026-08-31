@@ -127,7 +127,7 @@ before it writes the output file, and you get a silent no-op.
 ```
 userpatches/config/boards/giada-dn73.csc          board config (U-Boot, kernel target)
 userpatches/kernel/archive/rockchip64-6.18/dt/    board DTS for BRANCH=current
-userpatches/kernel/archive/rockchip64-7.1/dt/     the same DTS for BRANCH=edge
+userpatches/kernel/archive/rockchip64-7.2/dt/     the same DTS for BRANCH=edge
 userpatches/customize-image.sh                     runs in the image chroot
 overlay/*.dts                                      same fixes, for existing installs
 scripts/extract-dtb.py, mdio-raw-scan.py           diagnostic tools
@@ -188,7 +188,7 @@ the fixes compiled in. The overlays exist for the opposite case, a foreign
 mandatory, and `<version>` must match what the board's `KERNEL_TARGET` resolves
 to. The versions live in `KERNEL_MAJOR_MINOR` in
 `config/sources/families/include/rockchip64_common.inc` upstream: `current` is
-6.18 and `edge` is 7.1. When either moves the directory has to be renamed, or
+6.18 and `edge` is 7.2. When either moves the directory has to be renamed, or
 the DTS is **silently ignored** and the image builds against the wrong device
 tree.
 
@@ -197,7 +197,7 @@ a directory, and the DTS is kept as two identical copies:
 
 ```
 userpatches/kernel/archive/rockchip64-6.18/dt/rk3328-giada-dn73.dts   BRANCH=current
-userpatches/kernel/archive/rockchip64-7.1/dt/rk3328-giada-dn73.dts    BRANCH=edge
+userpatches/kernel/archive/rockchip64-7.2/dt/rk3328-giada-dn73.dts    BRANCH=edge
 ```
 
 `diff` between them must come back empty. `scripts/check-upstream.sh` enforces
