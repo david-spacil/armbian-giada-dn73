@@ -134,8 +134,12 @@ scripts/check-upstream.sh                          reports drift from armbian/bu
 scripts/compile-dts.sh                             compiles the board DTS, no image build
 scripts/kernel-versions.sh                         branch -> kernel version, shared by the two above
 scripts/check-overlay-parity.sh                    board DTS vs overlays, no network
-.github/workflows/upstream-drift.yml               runs all three weekly, files an issue
+scripts/verify-kernel-debs.sh                      kernel packages carry the Giada DTB
+scripts/build-apt-repo.sh                          signed apt repository from those packages
+.github/workflows/upstream-drift.yml               runs all three checks weekly, files an issue
+.github/workflows/kernel-repo.yml                  builds and publishes the kernel packages
 docs/diagnosing-a-mismatched-board.md              method, and the dead ends
+docs/kernel-repo.md                                the kernel repository, and installing from it
 ```
 
 The two diagnostic scripts generalise to any Rockchip board whose vendor
@@ -380,8 +384,12 @@ stop an **explicit** `apt install pkg=version` — verified, apt will happily
 downgrade past the hold when asked by name. That is fine for this threat model
 and worth knowing before doing it by hand.
 
-So the update path for this board is: rebuild from this repository and install
-the packages it produces. Not `apt upgrade` from `apt.armbian.com`.
+So the update path for this board is: install the packages this repository
+builds. Not `apt upgrade` from `apt.armbian.com`. For the kernel that is now a
+signed apt repository on GitHub Pages, built weekly by
+`.github/workflows/kernel-repo.yml` and installed by hand — `docs/kernel-repo.md`
+has the design and the procedure. The rest of the Armbian layer still moves
+only with a rebuilt image.
 
 ### The bump procedure
 

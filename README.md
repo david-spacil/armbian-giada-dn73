@@ -105,7 +105,9 @@ gap** — start there before trusting anything on this list.
   installing it removes the DTB U-Boot boots from. Images built from this
   repository hold the kernel packages automatically (`BSPFREEZE=yes`); on a
   machine installed before that, run `armbian-config --api
-  module_armbian_firmware hold`. Update by rebuilding from here instead.
+  module_armbian_firmware hold`. Kernel updates come from this repository's
+  own signed apt repository instead — see
+  [docs/kernel-repo.md](docs/kernel-repo.md).
 - Interfaces are `end0` and `wlx<mac>`, not `eth0` and `wlan0`. Scripts carried
   over from a dusun-based install will name the wrong one.
 - Configuring WiFi costs about a minute of boot time. The first association

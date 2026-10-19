@@ -1,0 +1,210 @@
+name: Kernel repository
+
+# Builds the kernel and device tree packages for BRANCH=current and publishes
+# them as a signed apt repository on GitHub Pages, which the board installs
+# from by hand (nothing on the board upgrades on its own - it is the house's
+# DNS server, and a kernel that does not boot takes the network with it).
+#
+# Two jobs, because they trust different things:
+#
+#   build    runs armbian/build's code as root - code this repository does not
+#            control - so it gets a read-only token and no secrets at all
+#   publish  gets the signing key, from the github-pages environment, which
+#            only main can deploy to; it runs nothing but this repository's
+#            scripts
+#
+# The split protects the key, not the packages: whatever armbian/build does
+# ends up in the kernel either way, exactly as it does in a local build.
+# verify-kernel-debs.sh checks the one thing that bricks this board, the
+# device tree, before anything is signed.
+#
+# Every published build is also a GitHub release, kept forever. Pages carries
+# the newest KEEP of them, so `apt install pkg=<version>` reaches recent ones
+# and any older one is a download away. See docs/kernel-repo.md.
+
+on:
+  schedule:
+    # Tuesdays, 04:37 UTC. Off the hour, since scheduled runs bunch up there.
+    - cron: '37 4 * * 2'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Build and publish even if this kernel artifact is already published'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kernel-repo
+  cancel-in-progress: false
+
+env:
+  BOARD: giada-dn73
+  BRANCH: current
+  KEEP: 5
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    outputs:
+      skip: ${{ steps.plan.outputs.skip }}
+      artifact_version: ${{ steps.plan.outputs.artifact_version }}
+      armbian_sha: ${{ steps.plan.outputs.armbian_sha }}
+      revision: ${{ steps.plan.outputs.revision }}
+      kernel_version: ${{ steps.verify.outputs.kernel_version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Fetch armbian/build
+        run: |
+          git clone --depth 1 https://github.com/armbian/build.git "$RUNNER_TEMP/build"
+          mkdir -p "$RUNNER_TEMP/build/userpatches"
+          cp -r userpatches/* "$RUNNER_TEMP/build/userpatches/"
+
+      # artifact_version hashes the kernel source, every patch (our DTS
+      # included) and the kernel config, so an unchanged one means an
+      # unchanged kernel. Comparing it against the published releases is what
+      # keeps a weekly schedule from publishing the same kernel every week.
+      - name: Plan
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          cd "$RUNNER_TEMP/build"
+          sudo -E ./compile.sh artifact-config-dump-json WHAT=kernel \
+            BOARD="$BOARD" BRANCH="$BRANCH" PREFER_DOCKER=no > "$RUNNER_TEMP/plan.json"
+          artifact_version=$(jq -r '.artifact_version' "$RUNNER_TEMP/plan.json")
+          [[ -n $artifact_version && $artifact_version != null ]] || { echo "no artifact_version"; exit 1; }
+
+          # Armbian stamps every package with REVISION, and its VERSION file
+          # does not move between builds, so two builds would collide in the
+          # repository. Base plus UTC time is unique and only ever increases.
+          revision="$(cut -d- -f1 VERSION)-giada.$(date -u +%Y%m%d%H%M)"
+
+          {
+            echo "artifact_version=${artifact_version}"
+            echo "armbian_sha=$(git rev-parse HEAD)"
+            echo "revision=${revision}"
+          } >> "$GITHUB_OUTPUT"
+
+          if [[ $FORCE != true ]] && gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate --jq '.[].body' \
+              | grep -qxF "artifact: ${artifact_version}"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Kernel artifact ${artifact_version} is already published." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The hosted runner has ~14 GB free and a kernel build wants more.
+      - name: Free disk space
+        if: steps.plan.outputs.skip == 'false'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Build
+        if: steps.plan.outputs.skip == 'false'
+        env:
+          REVISION: ${{ steps.plan.outputs.revision }}
+        run: |
+          cd "$RUNNER_TEMP/build"
+          sudo -E ./compile.sh kernel BOARD="$BOARD" BRANCH="$BRANCH" \
+            REVISION="$REVISION" PREFER_DOCKER=no
+          mkdir -p "$RUNNER_TEMP/debs"
+          find output/debs -name "linux-image-${BRANCH}-rockchip64_*.deb" -exec cp {} "$RUNNER_TEMP/debs/" \;
+          find output/debs -name "linux-dtb-${BRANCH}-rockchip64_*.deb" -exec cp {} "$RUNNER_TEMP/debs/" \;
+          ls -l "$RUNNER_TEMP/debs"
+
+      - name: Verify
+        id: verify
+        if: steps.plan.outputs.skip == 'false'
+        run: |
+          scripts/verify-kernel-debs.sh "$RUNNER_TEMP/debs" \
+            --branch "$BRANCH" --version "${{ steps.plan.outputs.revision }}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.plan.outputs.skip == 'false'
+        with:
+          name: kernel-debs
+          path: ${{ runner.temp }}/debs/*.deb
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    if: needs.build.outputs.skip == 'false'
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    permissions:
+      contents: write   # the release
+      pages: write
+      id-token: write   # deploy-pages
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REVISION: ${{ needs.build.outputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kernel-debs
+          path: ${{ runner.temp }}/new
+
+      # Again, here: the artifact was produced by the job that ran code we do
+      # not control, and this is the last check before it is signed.
+      - name: Verify
+        run: scripts/verify-kernel-debs.sh "$RUNNER_TEMP/new" --branch "$BRANCH" --version "$REVISION"
+
+      - name: Create the release
+        run: |
+          gh release create "kernel-${REVISION}" "$RUNNER_TEMP"/new/*.deb \
+            --target "$GITHUB_SHA" \
+            --title "Kernel ${{ needs.build.outputs.kernel_version }} (${REVISION})" \
+            --notes "$(printf '%s\n' \
+              "artifact: ${{ needs.build.outputs.artifact_version }}" \
+              "kernel: ${{ needs.build.outputs.kernel_version }}" \
+              "armbian/build: ${{ needs.build.outputs.armbian_sha }}" \
+              "profile: ${GITHUB_SHA}")"
+
+      # The repository is rebuilt from the newest KEEP releases every time,
+      # rather than accumulated, so Pages never holds anything that is not
+      # also a release.
+      - name: Collect the newest releases
+        run: |
+          mkdir -p "$RUNNER_TEMP/pool"
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | startswith("kernel-"))] | sort_by(.createdAt) | reverse | .[].tagName' \
+            | head -n "$KEEP" \
+            | while read -r tag; do
+                gh release download "$tag" --pattern '*.deb' --dir "$RUNNER_TEMP/pool/$tag"
+              done
+          find "$RUNNER_TEMP/pool" -name '*.deb' | sort
+
+      - name: Build and sign the repository
+        env:
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+        run: |
+          [[ -n $APT_SIGNING_KEY ]] || { echo "APT_SIGNING_KEY is not set in the github-pages environment"; exit 1; }
+          sudo apt-get install -y -qq apt-utils > /dev/null
+          export GNUPGHOME=$(mktemp -d)
+          printf '%s\n' "$APT_SIGNING_KEY" | gpg --batch --import
+          fpr=$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr/ {print $10; exit}')
+          scripts/build-apt-repo.sh "$RUNNER_TEMP/pool" "$RUNNER_TEMP/site" --key "$fpr"
+          echo "Signed with \`${fpr}\`" >> "$GITHUB_STEP_SUMMARY"
+          rm -rf "$GNUPGHOME"
+
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ runner.temp }}/site
+
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
