@@ -1,8 +1,8 @@
 name: Checks
 
 # This profile lives outside armbian/build and is pinned to it in several
-# places - most dangerously the userpatches/kernel/archive/rockchip64-<version>/
-# directory name, which the build silently ignores once it stops matching.
+# places - the dusun board's U-Boot, the dt/ mechanism the .csc hook stages
+# the board DTS into, the rk3328.dtsi nodes the DTS overrides.
 # scripts/check-upstream.sh compares the pins against upstream; this runs it
 # weekly and files an issue when something moves, so the drift is noticed
 # before somebody builds an image rather than after.

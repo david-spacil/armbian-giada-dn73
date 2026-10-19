@@ -246,7 +246,7 @@ throughput collapse was not.
 | Path | Status | Notes |
 |---|---|---|
 | `BRANCH=current` (6.18) | ✅ | the reference build |
-| `BRANCH=edge` | ❌ | **no image has ever been built, let alone booted.** What is now checked in CI: `edge` resolves to kernel 7.2, `userpatches/kernel/archive/rockchip64-7.2/dt/` carries a copy of the DTS that `check-upstream.sh` proves byte-identical to the `current` one, and `compile-dts.sh` compiles it against `v7.2` plus Armbian's `rockchip64-7.2` patches. So it is not silently the dusun device tree, and it is not a DTS that fails to build — which is all a compiler can say |
+| `BRANCH=edge` | ❌ | **no image has ever been built, let alone booted.** What is now checked: the `.csc` hook stages the one DTS into whatever kernel `edge` resolves to (7.3 at the time of writing, confirmed with `config-dump-json`), `check-upstream.sh` fails if that hook goes missing, and `compile-dts.sh` compiles the DTS against the matching mainline tag plus Armbian's patches for that version. So it is not silently the dusun device tree, and it is not a DTS that fails to build — which is all a compiler can say |
 | `RELEASE=trixie`, CLI | ✅ | the reference build |
 | Other releases / `BUILD_DESKTOP=yes` | ❌ | untested |
 | `KERNEL_BTF=yes` | ✅ | `/sys/kernel/btf/vmlinux` present, 6 213 086 B. Needs ~6.5 GB RAM on the build host |

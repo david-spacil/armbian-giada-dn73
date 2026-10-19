@@ -33,6 +33,9 @@ INHERITED_FIELDS=(BOARDFAMILY KERNEL_TARGET KERNEL_TEST_TARGET BOOTCONFIG
                   BOOTBRANCH_BOARD BOOTPATCHDIR BOOT_SCENARIO)
 
 OURS="${REPO_ROOT}/userpatches/config/boards/giada-dn73.csc"
+
+# shellcheck source=scripts/kernel-versions.sh
+source "${REPO_ROOT}/scripts/kernel-versions.sh"
 DDR_BLOB_REPO="https://raw.githubusercontent.com/armbian/rkbin/master"
 
 fail=0
@@ -57,54 +60,44 @@ echo "Checking against armbian/build @ ${ARMBIAN_REF}"
 echo
 
 # ---------------------------------------------------------------------------
-echo "[1] kernel versions vs our dt/ directories"
-# The dt/ directory name must equal KERNEL_MAJOR_MINOR for the branch. A name
-# that no longer matches is skipped silently by the patcher and the image gets
-# the wrong device tree.
+echo "[1] the kernel each branch builds"
+# Nothing here names a kernel version: the .csc hook copies userpatches/dt/
+# into rockchip64-<KERNEL_MAJOR_MINOR>/dt/ at build time. What can still break
+# is a branch disappearing from upstream, or the hook disappearing from ours -
+# without it the build silently ships the dusun device tree.
 
+versions=()
 common=$(fetch "${RAW}/config/sources/families/include/rockchip64_common.inc")
 if [[ -z $common ]]; then
 	ERROR "could not fetch rockchip64_common.inc"
 else
-	our_targets=$(csc_field "$(cat "$OURS")" KERNEL_TARGET | tr ',' ' ')
-	for branch in $our_targets; do
-		ver=$(awk -v b="$branch" '
-			$0 ~ "^[[:space:]]*"b"\\)" {found=1}
-			found && /KERNEL_MAJOR_MINOR=/ {
-				match($0, /"[0-9.]+"/); print substr($0, RSTART+1, RLENGTH-2); exit
-			}' <<< "$common")
+	while read -r branch; do
+		[[ -z $branch ]] && continue
+		ver=$(kernel_version_for_branch "$common" "$branch")
 		if [[ -z $ver ]]; then
 			ERROR "BRANCH=$branch is in KERNEL_TARGET but upstream no longer defines it"
 			continue
 		fi
-		dir="${REPO_ROOT}/userpatches/kernel/archive/rockchip64-${ver}/dt"
-		if [[ -d $dir ]]; then
-			OK "BRANCH=$branch -> kernel $ver, and rockchip64-${ver}/dt/ exists"
-		else
-			ERROR "BRANCH=$branch is now kernel $ver, but rockchip64-${ver}/dt/ does not exist"
-			NOTE "the build would SILENTLY use the dusun device tree"
-			NOTE "fix: git mv the newest rockchip64-*/dt directory to rockchip64-${ver}"
-		fi
-	done
+		OK "BRANCH=$branch -> kernel $ver, the DTS is staged into rockchip64-${ver}/dt/"
+		[[ " ${versions[*]} " == *" ${ver} "* ]] || versions+=("$ver")
+	done < <(our_branches "$OURS")
+fi
 
-	# Stale directories are harmless but mean we are carrying dead weight.
-	for dir in "${REPO_ROOT}"/userpatches/kernel/archive/rockchip64-*/; do
-		[[ -d $dir ]] || continue
-		d=$(basename "$dir"); dver=${d#rockchip64-}
-		if ! grep -q "KERNEL_MAJOR_MINOR=\"${dver}\"" <<< "$common"; then
-			WARN "$d/ matches no branch upstream any more - stale, consider removing"
-		fi
-	done
+if grep -q '^function late_family_config__[0-9]*_giada_dn73_stage_device_tree()' "$OURS"; then
+	OK "giada-dn73.csc still carries the hook that stages the board DTS"
+else
+	ERROR "giada-dn73.csc has no late_family_config hook staging the board DTS"
+	NOTE "the build would SILENTLY use the dusun device tree"
 fi
 echo
 
 # ---------------------------------------------------------------------------
 echo "[2] the dt/ mechanism is still declared"
-# Our DTS only gets copied because upstream's patching config asks for it.
+# The staged DTS only gets copied into the kernel because upstream's patching
+# config for that version asks for dt/.
 
-for dir in "${REPO_ROOT}"/userpatches/kernel/archive/rockchip64-*/; do
-	[[ -d $dir ]] || continue
-	d=$(basename "$dir")
+for ver in "${versions[@]}"; do
+	d="rockchip64-${ver}"
 	yaml=$(fetch "${RAW}/patch/kernel/archive/${d}/0000.patching_config.yaml")
 	if [[ -z $yaml ]]; then
 		ERROR "$d has no 0000.patching_config.yaml upstream"
@@ -184,9 +177,8 @@ board_labels=(vdd_logic usb_otg_drv usb_host_drv vcc_otg_5v vcc_host_5v)
 soc_labels=(uart1 i2c1 pinctrl)
 
 found_dusun=0
-for dir in "${REPO_ROOT}"/userpatches/kernel/archive/rockchip64-*/; do
-	[[ -d $dir ]] || continue
-	d=$(basename "$dir")
+for ver in "${versions[@]}"; do
+	d="rockchip64-${ver}"
 	dts=$(fetch "${RAW}/patch/kernel/archive/${d}/dt/rk3328-dusun-dsom-010r.dts")
 	[[ -z $dts ]] && continue
 	found_dusun=1
@@ -250,15 +242,19 @@ echo
 # ---------------------------------------------------------------------------
 echo "[7] local consistency"
 
-mapfile -t dts_copies < <(find "${REPO_ROOT}/userpatches/kernel/archive" -name 'rk3328-giada-dn73.dts' | sort)
-if [[ ${#dts_copies[@]} -lt 2 ]]; then
-	WARN "only ${#dts_copies[@]} copy of the board DTS - KERNEL_TARGET lists more than one branch"
+# The board DTS exists once. A copy under userpatches/kernel/ is a leftover of
+# the old layout: the hook would overwrite it for the version it matches, and
+# for any other version it would be dead weight that looks authoritative.
+DTS="${REPO_ROOT}/userpatches/dt/rk3328-giada-dn73.dts"
+if [[ -f $DTS ]]; then
+	OK "the board DTS is userpatches/dt/rk3328-giada-dn73.dts"
 else
-	same=1
-	for c in "${dts_copies[@]:1}"; do
-		cmp -s "${dts_copies[0]}" "$c" || { ERROR "DTS copies differ: ${dts_copies[0]} vs $c"; same=0; }
-	done
-	[[ $same -eq 1 ]] && OK "all ${#dts_copies[@]} copies of the board DTS are identical"
+	ERROR "userpatches/dt/rk3328-giada-dn73.dts does not exist - the build fails in the hook"
+fi
+mapfile -t strays < <(find "${REPO_ROOT}/userpatches/kernel" -name 'rk3328-giada-dn73.dts' 2>/dev/null)
+if [[ ${#strays[@]} -gt 0 ]]; then
+	WARN "versioned copies of the board DTS under userpatches/kernel/: ${strays[*]#"${REPO_ROOT}/"}"
+	NOTE "the hook stages userpatches/dt/ at build time; remove these"
 fi
 
 # This repository is public and was scrubbed before publication: no private

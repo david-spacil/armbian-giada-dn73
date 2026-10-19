@@ -24,17 +24,19 @@ Main() {
 
 # The one failure in this port that is otherwise silent.
 #
-# The board DTS is picked up from userpatches/kernel/archive/<family>-<version>/dt/,
+# Armbian picks a board DTS up from userpatches/kernel/archive/<family>-<version>/dt/,
 # and <version> has to equal KERNEL_MAJOR_MINOR for the branch being built. The
 # copy that does it, lib/tools/common/dt_makefile_patcher.py, is:
 #
 #     if not os.path.isdir(full_path_source):
 #         continue
 #
-# so a directory whose name no longer matches is skipped without an error, at
-# debug log level only. The build then succeeds and ships the dusun-dsom-010r
-# device tree instead - the board comes up with no ethernet, no WiFi, no serial
-# port and no RTC, and nothing in the build log says why.
+# so a directory whose name does not match is skipped without an error, at
+# debug log level only. The hook in giada-dn73.csc stages userpatches/dt/ into
+# the right directory at build time, but if that hook stops running - renamed
+# upstream, deleted here - the build still succeeds and ships the dusun-dsom-010r
+# device tree: no ethernet, no WiFi, no serial port and no RTC, and nothing in
+# the build log says why.
 #
 # Failing the build here converts that into something you cannot miss. It also
 # catches the DTS failing to compile and the file being renamed.
@@ -50,10 +52,10 @@ assert_correct_device_tree() {
 	if [[ -z $dtb || ! -f $dtb ]]; then
 		dtb=/boot/dtb/rockchip/rk3328-giada-dn73.dtb
 		echo "ERROR: $dtb is missing from the built image." >&2
-		echo "       The board DTS was not compiled in. Check that" >&2
-		echo "       userpatches/kernel/archive/rockchip64-<version>/dt/ matches the" >&2
-		echo "       KERNEL_MAJOR_MINOR of the branch being built - see CLAUDE.md," >&2
-		echo "       'Keeping up with upstream'." >&2
+		echo "       The board DTS was not compiled in. Check the build log for" >&2
+		echo "       'Giada DN73: staged board DTS' - if it is not there, the hook in" >&2
+		echo "       giada-dn73.csc did not run. See CLAUDE.md, 'The DTS has no" >&2
+		echo "       version in its path, on purpose'." >&2
 		exit 1
 	fi
 

@@ -125,14 +125,14 @@ before it writes the output file, and you get a silent no-op.
 ## Layout and the one thing that must stay in sync
 
 ```
-userpatches/config/boards/giada-dn73.csc          board config (U-Boot, kernel target)
-userpatches/kernel/archive/rockchip64-6.18/dt/    board DTS for BRANCH=current
-userpatches/kernel/archive/rockchip64-7.2/dt/     the same DTS for BRANCH=edge
+userpatches/config/boards/giada-dn73.csc          board config, and the hook that stages the DTS
+userpatches/dt/rk3328-giada-dn73.dts               board DTS, the only copy, for every branch
 userpatches/customize-image.sh                     runs in the image chroot
 overlay/*.dts                                      same fixes, for existing installs
 scripts/extract-dtb.py, mdio-raw-scan.py           diagnostic tools
 scripts/check-upstream.sh                          reports drift from armbian/build
 scripts/compile-dts.sh                             compiles the board DTS, no image build
+scripts/kernel-versions.sh                         branch -> kernel version, shared by the two above
 scripts/check-overlay-parity.sh                    board DTS vs overlays, no network
 .github/workflows/upstream-drift.yml               runs all three weekly, files an issue
 docs/diagnosing-a-mismatched-board.md              method, and the dead ends
@@ -182,28 +182,54 @@ the fixes compiled in. The overlays exist for the opposite case, a foreign
 `dusun-dsom-010r` install, which is reached through Armbian's user path,
 `/boot/overlay-user/` plus `user_overlays=` in `armbianEnv.txt`.
 
-### The `userpatches` path is exact
+### The DTS has no version in its path, on purpose
 
-`userpatches/kernel/archive/<family>-<version>/dt/` — the `archive/` component is
-mandatory, and `<version>` must match what the board's `KERNEL_TARGET` resolves
-to. The versions live in `KERNEL_MAJOR_MINOR` in
-`config/sources/families/include/rockchip64_common.inc` upstream: `current` is
-6.18 and `edge` is 7.2. When either moves the directory has to be renamed, or
-the DTS is **silently ignored** and the image builds against the wrong device
-tree.
+Armbian only picks up a board DTS from
+`userpatches/kernel/archive/<family>-<version>/dt/`, and `<version>` must equal
+`KERNEL_MAJOR_MINOR` for the branch being built — `config/sources/families/include/rockchip64_common.inc`
+upstream. A directory with any other name is **silently ignored** and the image
+builds against the dusun device tree (see below for the line that does it).
 
-`giada-dn73.csc` lists `KERNEL_TARGET="current,edge"`, so **both** versions need
-a directory, and the DTS is kept as two identical copies:
+That path used to be checked in, as one identical copy per branch, and it went
+stale every time upstream moved a branch: `edge` went 7.1 → 7.2 → 7.3 within a
+few months, each move a hand-made `git mv`, each one a weekly drift issue until
+somebody did it. So the version is no longer in this repository at all:
 
-```
-userpatches/kernel/archive/rockchip64-6.18/dt/rk3328-giada-dn73.dts   BRANCH=current
-userpatches/kernel/archive/rockchip64-7.2/dt/rk3328-giada-dn73.dts    BRANCH=edge
-```
+- `userpatches/dt/rk3328-giada-dn73.dts` is the one copy. Armbian does not look
+  there; nothing does except the hook below.
+- `giada-dn73.csc` defines `late_family_config__900_giada_dn73_stage_device_tree`,
+  which copies it into `userpatches/kernel/${KERNELPATCHDIR}/dt/` of the build
+  tree. `KERNELPATCHDIR` is defaulted to `archive/rockchip64-<KERNEL_MAJOR_MINOR>`
+  by `late_family_config__common_defaults_for_mainline_kernel` in
+  `config/sources/common.conf`. Unnumbered hooks sort as `500_`, so `900_` runs
+  after it, and it covers `current`, `edge` and `bleedingedge` alike.
 
-`diff` between them must come back empty. `scripts/check-upstream.sh` enforces
-that, along with everything else below. Only `current` is tested
-(`KERNEL_TEST_TARGET`); the `edge` copy exists so that building it does not
-silently fall back to a device tree for a different board.
+The three facts that make this safe, all verified against `armbian/build` rather
+than assumed:
+
+- **Cache invalidation.** `lib/functions/artifacts/artifact-kernel.sh` hashes
+  `${USERPATCHES_PATH}/kernel/${KERNELPATCHDIR}` by content when it versions the
+  kernel artifact, and that happens after the config phase. Measured with
+  `./compile.sh artifact-config-dump-json WHAT=kernel`: editing the DTS changes
+  the `P` (patches) component of the version, reverting it restores the old one.
+  So a changed DTS rebuilds the kernel instead of reusing a cached stock one.
+- **Docker.** `lib/functions/host/docker.sh` bind-mounts `userpatches/`
+  read-write, so the copy lands in the build tree's `userpatches/`, never in
+  this repository.
+- **It actually runs.** `./compile.sh config-dump-json BOARD=giada-dn73` with
+  `BRANCH=current` and `BRANCH=edge` leaves the DTS in `rockchip64-6.18/dt/` and
+  `rockchip64-7.3/dt/` respectively.
+
+What can still go wrong is the hook itself: Armbian renaming `late_family_config`
+or `KERNELPATCHDIR`, or the hook being deleted here. `check-upstream.sh` fails if
+the hook is missing from the `.csc`, and the `customize-image.sh` assertion fails
+the build if the image lacks the Giada DTB, whatever the cause.
+
+Do not reintroduce checked-in `userpatches/kernel/archive/*/dt/` copies. The hook
+would overwrite the one matching the current version and the others would be
+dead weight that looks authoritative; `check-upstream.sh` warns about them. Only
+`current` is tested (`KERNEL_TEST_TARGET`); `edge` is staged so that building it
+does not silently fall back to a device tree for a different board.
 
 ## Keeping up with upstream
 
@@ -230,7 +256,7 @@ if not os.path.isdir(full_path_source):
 ```
 
 A directory whose name no longer matches `KERNEL_MAJOR_MINOR` is skipped with no
-error and only a `log.debug`. The build succeeds, the image ships the
+error and only a `log.debug` — the reason the staging hook above exists. The build succeeds, the image ships the
 `dusun-dsom-010r` device tree, and the board comes up with no ethernet, no WiFi,
 no serial and no RTC. `userpatches/customize-image.sh` now fails the build if
 `rk3328-giada-dn73.dtb` is missing from the rootfs or does not contain the
@@ -364,10 +390,12 @@ the packages it produces. Not `apt upgrade` from `apt.armbian.com`.
 `check-overlay-parity.sh` weekly, filing an issue when any of them speaks up.
 The compile is a drift check as much as a local one: on a scheduled run nothing
 here has changed, so a failure means `rk3328.dtsi` or an Armbian patch moved
-under us. When the kernel version moved:
+under us. A branch moving to a new kernel needs no change here any more — the
+hook stages the DTS for whatever version it resolves to — but it still needs
+checking:
 
-1. `git mv userpatches/kernel/archive/rockchip64-<old>/ .../rockchip64-<new>/`,
-   for whichever of `current` and `edge` moved. Keep the copies identical.
+1. `compile-dts.sh` compiles against the new version on its own. If it fails,
+   the DTS needs fixing, not moving.
 2. Diff the new `rk3328.dtsi` against the old one for the nodes this board
    overrides — `opp-table-0` (the DTS deletes it), `opp-table-gpu` (its 1075000
    µV is why `vdd_logic` needs a 712500 floor), `gmac2io`, `i2s1`, `codec`,

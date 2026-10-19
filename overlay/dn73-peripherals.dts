@@ -5,7 +5,7 @@
  * Giada DN73 - RS232 and RTC for an existing dusun-dsom-010r install.
  *
  * Companion to gmac2io-rtl8211.dts. Everything here is also in
- * userpatches/kernel/archive/rockchip64-6.18/dt/rk3328-giada-dn73.dts; this
+ * userpatches/dt/rk3328-giada-dn73.dts; this
  * overlay exists so a machine already running a dusun-based image can pick the
  * peripherals up without being reinstalled.
  *

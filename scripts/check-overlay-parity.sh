@@ -27,7 +27,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DTS="${REPO_ROOT}/userpatches/kernel/archive/rockchip64-6.18/dt/rk3328-giada-dn73.dts"
+DTS="${REPO_ROOT}/userpatches/dt/rk3328-giada-dn73.dts"
 OVERLAYS=("${REPO_ROOT}/overlay/gmac2io-rtl8211.dts" "${REPO_ROOT}/overlay/dn73-peripherals.dts")
 
 fail=0
