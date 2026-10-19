@@ -113,6 +113,12 @@ else
 	echo "WARN: no --key, repository is unsigned" >&2
 fi
 
+# GitHub Pages refuses a site over 1 GB. One build is ~56 MB with xz, so this
+# only trips if KEEP grows or compression silently stops (an uncompressed
+# linux-image alone is 322 MB) - better here than as a failed deploy.
+size_mb=$(du -sm "$OUT" | cut -f1)
+[[ $size_mb -lt ${MAX_SITE_MB:-900} ]] || die "repository is ${size_mb} MB, over the ${MAX_SITE_MB:-900} MB budget for GitHub Pages"
+
 # GitHub Pages runs Jekyll unless told not to, and Jekyll drops files it does
 # not recognise.
 touch "${OUT}/.nojekyll"

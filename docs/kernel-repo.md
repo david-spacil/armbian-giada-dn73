@@ -19,7 +19,8 @@ person running a command and watching it.
 
 | | |
 |---|---|
-| Packages | `linux-image-current-rockchip64`, `linux-dtb-current-rockchip64` — the two the board holds, nothing else. `build-apt-repo.sh` refuses any other package. |
+| Packages | `linux-image-current-rockchip64`, `linux-dtb-current-rockchip64` — the two the board holds, nothing else. `build-apt-repo.sh` refuses any other package. The build also produces `linux-headers` and `linux-libc-dev`; they are not published, so anything on the board that builds kernel modules (DKMS) would be left behind by an upgrade. |
+| Size | ~52 MB `linux-image` and a few MB `linux-dtb` per build, xz-compressed. Pages caps a site at 1 GB; `build-apt-repo.sh` fails at 900 MB. |
 | Suite / component | `giada` / `main`, `arm64` only |
 | `Origin` / `Label` | `armbian-giada-dn73` |
 | Version | `<Armbian VERSION base>-giada.<UTC YYYYMMDDHHMM>`, e.g. `26.11.0-giada.202610191900`. Unique per build and always increasing. Armbian stamps every build with the same `REVISION`, so without this two builds would collide. |
@@ -122,7 +123,9 @@ the rest of its configuration, not here.
 ### Each upgrade
 
 1. `apt update`, then list what is available:
-   `apt-cache madison linux-image-current-rockchip64`.
+   `apt-cache policy linux-image-current-rockchip64`. Use `policy`, not
+   `madison`: `madison` ignores pins and keeps listing Armbian's copies as if
+   they were candidates. In `policy` they show at priority `-1`.
 2. Download the chosen version of both packages (`apt-get download pkg=<ver>`)
    and run `scripts/verify-kernel-debs.sh <dir> --version <ver>` on them — the
    same check CI ran, now on the bytes that will actually be installed.

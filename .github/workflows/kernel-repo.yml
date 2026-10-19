@@ -113,8 +113,11 @@ jobs:
           REVISION: ${{ steps.plan.outputs.revision }}
         run: |
           cd "$RUNNER_TEMP/build"
+          # DEB_COMPRESS: Armbian only compresses when it detects CI, and an
+          # uncompressed linux-image is 322 MB against 52 MB with xz. Pages
+          # caps a site at 1 GB, so this is not left to detection.
           sudo -E ./compile.sh kernel BOARD="$BOARD" BRANCH="$BRANCH" \
-            REVISION="$REVISION" PREFER_DOCKER=no
+            REVISION="$REVISION" DEB_COMPRESS=xz PREFER_DOCKER=no
           mkdir -p "$RUNNER_TEMP/debs"
           find output/debs -name "linux-image-${BRANCH}-rockchip64_*.deb" -exec cp {} "$RUNNER_TEMP/debs/" \;
           find output/debs -name "linux-dtb-${BRANCH}-rockchip64_*.deb" -exec cp {} "$RUNNER_TEMP/debs/" \;
