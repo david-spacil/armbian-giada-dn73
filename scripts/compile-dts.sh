@@ -6,9 +6,11 @@
 # rk3328-dram-default-timing.dtsi and dt-bindings headers, so it only builds
 # inside a kernel tree. Until this script existed, the only thing that ever
 # compiled it was a full Armbian build: a typo cost ~42 minutes to discover, and
-# the copy under rockchip64-7.1/ (BRANCH=edge) had never been compiled at all.
+# the edge kernel had never been compiled against at all.
 #
-# What it does, per userpatches/kernel/archive/rockchip64-<ver>/dt/ directory:
+# What it does, for the kernel of every branch in our KERNEL_TARGET (read from
+# upstream's rockchip64_common.inc, the same versions the .csc hook stages
+# userpatches/dt/ into at build time):
 #
 #   1. shallow sparse-clone torvalds/linux at tag v<ver> - just the arm64 device
 #      trees and the bindings headers, ~60 MiB
@@ -24,8 +26,8 @@
 # that quietly stops describing this board. It is *not* proof that the image
 # will be correct - only booting the hardware is that, see TESTING.md.
 #
-# Exit status: 0 all copies compile, 1 one did not, 2 a copy could not be
-# checked (no matching kernel tag yet) and wants a human.
+# Exit status: 0 it compiles for every branch, 1 it did not for one, 2 a branch
+# could not be checked (no matching kernel tag yet) and wants a human.
 #
 # Usage: scripts/compile-dts.sh [--ref <armbian-git-ref>] [--work <dir>]
 #
@@ -50,6 +52,10 @@ done
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DTS_NAME="rk3328-giada-dn73.dts"
 MODEL="Giada DN73"
+SRC_DTS="${REPO_ROOT}/userpatches/dt/${DTS_NAME}"
+
+# shellcheck source=scripts/kernel-versions.sh
+source "${REPO_ROOT}/scripts/kernel-versions.sh"
 
 fail=0
 warn=0
@@ -87,8 +93,10 @@ if [[ ! -d ${ABUILD}/.git ]]; then
 	git clone --quiet --depth 1 --filter=blob:none --sparse \
 		--branch "$ARMBIAN_REF" https://github.com/armbian/build.git "$ABUILD" || {
 		red "could not clone armbian/build"; exit 1; }
-	git -C "$ABUILD" sparse-checkout set patch/kernel/archive > /dev/null || exit 1
 fi
+# Outside the clone, so a --work tree from before this file was needed gets it.
+git -C "$ABUILD" sparse-checkout set --no-cone /patch/kernel/archive/ \
+	/config/sources/families/include/rockchip64_common.inc > /dev/null || exit 1
 
 # Everything the kernel needs to preprocess a board DTS, and nothing else.
 SPARSE_PATHS=(arch/arm64/boot/dts include/dt-bindings include/uapi/linux)
@@ -141,31 +149,37 @@ prepare_tree() {
 echo "Compiling the board DTS against mainline + armbian/build @ ${ARMBIAN_REF}"
 echo
 
-shopt -s nullglob
-dt_dirs=("${REPO_ROOT}"/userpatches/kernel/archive/rockchip64-*/dt)
-if [[ ${#dt_dirs[@]} -eq 0 ]]; then
-	ERROR "no userpatches/kernel/archive/rockchip64-*/dt directory at all"
+if [[ ! -f $SRC_DTS ]]; then
+	ERROR "userpatches/dt/${DTS_NAME} does not exist"
 	exit 1
 fi
 
-for dt in "${dt_dirs[@]}"; do
-	d=$(basename "$(dirname "$dt")"); ver=${d#rockchip64-}
-	src="${dt}/${DTS_NAME}"
+common="${ABUILD}/config/sources/families/include/rockchip64_common.inc"
+[[ -f $common ]] || { red "armbian/build has no rockchip64_common.inc"; exit 1; }
+
+versions=()
+while read -r branch; do
+	[[ -z $branch ]] && continue
+	ver=$(kernel_version_for_branch "$(cat "$common")" "$branch")
+	if [[ -z $ver ]]; then
+		ERROR "BRANCH=${branch} is in KERNEL_TARGET but upstream no longer defines it"
+		continue
+	fi
+	[[ " ${versions[*]} " == *" ${ver} "* ]] || versions+=("$ver")
+done < <(our_branches "${REPO_ROOT}/userpatches/config/boards/giada-dn73.csc")
+
+for ver in "${versions[@]}"; do
+	d="rockchip64-${ver}"
+	src="$SRC_DTS"
 
 	echo "[${ver}]"
-	if [[ ! -f $src ]]; then
-		ERROR "${d}/dt/${DTS_NAME} does not exist"
-		NOTE "the build would silently use the dusun device tree"
-		echo; continue
-	fi
-
 	tree=$(prepare_tree "$ver"); rc=$?
 	case $rc in
 		2) WARN "linux has no v${ver} tag yet - cannot compile this copy"
 		   NOTE "expected while a branch tracks an -rc kernel; re-run after the release"
 		   echo; continue ;;
 		3) ERROR "armbian/build has no patch/kernel/archive/rockchip64-${ver}"
-		   NOTE "the kernel version moved; see CLAUDE.md, 'The bump procedure'"
+		   NOTE "upstream points a branch at a kernel it ships no patches for"
 		   echo; continue ;;
 		0) ;;
 		*) ERROR "could not prepare a linux-${ver} tree"; echo; continue ;;
@@ -214,6 +228,6 @@ elif [[ $warn -ne 0 ]]; then
 	ylw "Compiled what could be compiled; something above wants a human."
 	exit 2
 else
-	grn "Every copy of the board DTS compiles."
+	grn "The board DTS compiles for every branch."
 	exit 0
 fi
