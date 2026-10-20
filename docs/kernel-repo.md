@@ -83,7 +83,7 @@ Each release records the `armbian/build` commit it was built from.
    fingerprint; it must match step 1. Record it here:
 
    ```
-   Signing key fingerprint: <fill in after step 1>
+   Signing key fingerprint: CAC8357ED84CBA514FD26087F7BAAECD3A32DB2C
    ```
 
 ## Installing on the board
