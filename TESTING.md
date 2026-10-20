@@ -79,9 +79,9 @@ Untried, and written down so it is not forgotten. `armbian-firmware` ships
 `Firmware version 24.11.0, H2C version 12`, and the prime suspect in the WiFi
 association row below. A newer one is the cheapest possible fix.
 
-It cannot be tried today: `BSPFREEZE` holds that package, and the Armbian
-repository's newest is `26.5.1` against the locally built `26.08.0-trunk`, so
-there is nothing higher to install. When there is:
+It can be tried now: the Armbian repository carries `26.8.3`, which outranks
+the locally built `26.08.0-trunk` (2026-10-20). `BSPFREEZE` holds it, so it
+takes a deliberate unhold:
 
 ```sh
 apt-mark unhold armbian-firmware

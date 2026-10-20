@@ -344,8 +344,10 @@ the same name. `unattended-upgrades` is enabled by default and Armbian's own
 time `apt.armbian.com` publishes a version above the locally built one, the DTB
 is replaced by a package without it, U-Boot stops resolving
 `fdtfile=rockchip/rk3328-giada-dn73.dtb`, and the board fails to boot with
-nobody watching. Locally built `26.08.0-trunk` currently outranks the repository's
-`26.5.1`, which is the only reason this has not happened yet.
+nobody watching. That version exists now: `26.8.3` outranks the locally built
+`26.08.0-trunk` (`26.8` and `26.08` compare equal, then `3` beats `0`), and
+`apt list --upgradable` on the reference unit lists both packages at it
+(2026-10-20). The hold below is what stops it.
 
 Two mechanisms, both Armbian's own, and both needed:
 
