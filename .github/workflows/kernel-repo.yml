@@ -77,7 +77,11 @@ jobs:
         run: |
           cd "$RUNNER_TEMP/build"
           sudo -E ./compile.sh artifact-config-dump-json WHAT=kernel \
-            BOARD="$BOARD" BRANCH="$BRANCH" PREFER_DOCKER=no > "$RUNNER_TEMP/plan.json"
+            BOARD="$BOARD" BRANCH="$BRANCH" PREFER_DOCKER=no > "$RUNNER_TEMP/plan.out"
+          # Under GitHub Actions, Armbian writes ::group:: / ::endgroup::
+          # workflow commands to stdout, in between the JSON. Outside Actions
+          # it does not, which is why this passed when run locally.
+          grep -v '^::' "$RUNNER_TEMP/plan.out" > "$RUNNER_TEMP/plan.json"
           artifact_version=$(jq -r '.artifact_version' "$RUNNER_TEMP/plan.json")
           [[ -n $artifact_version && $artifact_version != null ]] || { echo "no artifact_version"; exit 1; }
 
