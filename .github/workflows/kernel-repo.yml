@@ -76,14 +76,22 @@ jobs:
           FORCE: ${{ inputs.force }}
         run: |
           cd "$RUNNER_TEMP/build"
-          sudo -E ./compile.sh artifact-config-dump-json WHAT=kernel \
-            BOARD="$BOARD" BRANCH="$BRANCH" PREFER_DOCKER=no > "$RUNNER_TEMP/plan.out"
-          # Under GitHub Actions, Armbian writes ::group:: / ::endgroup::
-          # workflow commands to stdout, in between the JSON. Outside Actions
-          # it does not, which is why this passed when run locally.
-          grep -v '^::' "$RUNNER_TEMP/plan.out" > "$RUNNER_TEMP/plan.json"
-          artifact_version=$(jq -r '.artifact_version' "$RUNNER_TEMP/plan.json")
-          [[ -n $artifact_version && $artifact_version != null ]] || { echo "no artifact_version"; exit 1; }
+          # ALLOW_ROOT here and in Build: compile.sh is run under sudo, and
+          # without it Armbian files a "don't run as root" ::error annotation
+          # on every run. It carries on regardless when there is no terminal
+          # (lib/functions/cli/utils-cli.sh), so this only silences it.
+          #
+          # Not parsed from the JSON on stdout: under GitHub Actions Armbian
+          # mixes workflow commands and log lines into stdout, and which ones
+          # differs between runs. It also writes artifact_version to
+          # $GITHUB_OUTPUT itself (github_actions_add_output), as a plain
+          # key=value line, so point that at a file of our own and read it.
+          plan_out="$RUNNER_TEMP/plan.ghout"
+          : > "$plan_out"
+          GITHUB_OUTPUT="$plan_out" sudo -E ./compile.sh artifact-config-dump-json WHAT=kernel \
+            BOARD="$BOARD" BRANCH="$BRANCH" PREFER_DOCKER=no ALLOW_ROOT=yes > /dev/null
+          artifact_version=$(sed -n 's/^artifact_version=//p' "$plan_out" | tail -1)
+          [[ -n $artifact_version ]] || { echo "Armbian reported no artifact_version"; cat "$plan_out"; exit 1; }
 
           # Armbian stamps every package with REVISION, and its VERSION file
           # does not move between builds, so two builds would collide in the
@@ -121,7 +129,7 @@ jobs:
           # uncompressed linux-image is 322 MB against 52 MB with xz. Pages
           # caps a site at 1 GB, so this is not left to detection.
           sudo -E ./compile.sh kernel BOARD="$BOARD" BRANCH="$BRANCH" \
-            REVISION="$REVISION" DEB_COMPRESS=xz PREFER_DOCKER=no
+            REVISION="$REVISION" DEB_COMPRESS=xz PREFER_DOCKER=no ALLOW_ROOT=yes
           mkdir -p "$RUNNER_TEMP/debs"
           find output/debs -name "linux-image-${BRANCH}-rockchip64_*.deb" -exec cp {} "$RUNNER_TEMP/debs/" \;
           find output/debs -name "linux-dtb-${BRANCH}-rockchip64_*.deb" -exec cp {} "$RUNNER_TEMP/debs/" \;
