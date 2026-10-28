@@ -12,7 +12,7 @@ Everything below was checked on a single DN73, on an image built by this profile
 |---|---|
 | Armbian | 26.08.0-trunk |
 | Release | Debian 13 trixie, CLI (no desktop) |
-| Kernel | 6.18.41-current-rockchip64, `BRANCH=current`, full BTF |
+| Kernel | 6.18.41-current-rockchip64, `BRANCH=current`, full BTF; since upgraded to 6.18.59, see below |
 | U-Boot | `2026.04_armbian`, this profile's own build |
 | Installed on | eMMC (`/dev/mmcblk2p1`), microSD removed |
 | Overlays | none applied |
@@ -33,6 +33,20 @@ updated into an unbootable state — see CLAUDE.md.
 
 The stable MAC survived the reinstall, evidenced independently by the DHCP server
 handing back the same lease.
+
+The first kernel update through the apt repository (`docs/kernel-repo.md`) was
+done on 2026-10-28: `26.08.0-trunk` → `26.11.0-giada.202610271000`, that is
+6.18.41 → **6.18.59-current-rockchip64**, on the running eMMC install with the
+microSD removed. U-Boot was not touched and stayed `2026.04_armbian`. After the
+reboot: model `Giada DN73`, `end0` up at 1000 Mb/s with the same address,
+`renderD128` present and `lima 1.1.0` bound, `rtc0` = `rtc-hym8563`,
+`/dev/ttyS1`, `rtw88_8821cu` loaded, both decoders (`rkvdec`,
+`rockchip,rk3328-vpu-dec`) registered, BTF present, zero failed units, and both
+kernel packages still on hold. The one error in `dmesg`,
+`devfreq-event event0: unsupported memory type 0x3`, was there on 6.18.41 too.
+This was a smoke test, not a rerun of the peripheral rows below; they were
+measured on 6.18.40–6.18.41. No boot time is given, since the post-update check
+itself runs during boot and takes a minute.
 
 A second round of testing added the GPU, video decode, throughput and thermal
 rows. That round ran on the same unit and the same image, with Docker and a few
